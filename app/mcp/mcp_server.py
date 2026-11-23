@@ -227,7 +227,9 @@ def transfer_animal_pen(
 
         # Kiểm tra chuồng đích, nếu chưa có thì tự động tạo
         pen = pens_repo.get_by_id(target_clean)
-        if not pen:
+        if pen:
+            target_clean = pen.get("id")
+        else:
             pens_repo.create_pen(pen_id=target_clean, name=f"Chuồng {target_clean}")
 
         res = animals_repo.transfer_pen(
@@ -389,12 +391,12 @@ def update_animal_health(
     health_type: str = "Disease",
 ) -> str:
     """
-    Cập nhật tình trạng sức khỏe cho cá thể vật nuôi (Khỏe, Sốt, Bệnh, Cách ly) và lưu nhật ký y tế.
+    Cập nhật tình trạng sức khỏe hoặc bệnh tật cho cá thể vật nuôi (Khỏe, Sốt nhẹ, Bệnh Tai Xanh, Dịch tả heo châu phi, Tiêu chảy PED, Cách ly) và lưu nhật ký y tế/phác đồ điều trị.
 
     Args:
         animal_id: Mã định danh cá thể (ví dụ: 'HEO-101', 'HEO-102', 'HEO-201')
-        status: Trạng thái sức khỏe mới ('Khoe', 'Sot nhe', 'Bo an', 'Cach ly', ...)
-        note: Ghi chú triệu chứng hoặc hướng điều trị
+        status: Trạng thái sức khỏe hoặc tên bệnh lý mới ('Khoe', 'Sot nhe', 'Bo an', 'Cach ly', 'Bệnh Tai Xanh', 'Dịch tả', ...)
+        note: Ghi chú triệu chứng hoặc hướng điều trị y tế
         health_type: Phân loại nhật ký ('Routine', 'Disease', 'Vaccine')
     """
     try:
@@ -409,6 +411,282 @@ def update_animal_health(
     except Exception as e:
         logger.error(f"Error in update_animal_health: {e}")
         return f"❌ Lỗi khi cập nhật sức khỏe: {str(e)}"
+
+
+@mcp.tool()
+def add_animal(
+    species: str = "Heo",
+    pen_id: str = "123",
+    count: int = 1,
+    animal_id: str = "",
+    weight: float = 50.0,
+    target_weight: float = 100.0,
+    status: str = "Khoe",
+) -> str:
+    """
+    Thêm cá thể mới hoặc thêm số lượng vật nuôi vào chuồng trại (ví dụ: thêm 5 con heo vào chuồng PEN-A02, hoặc thêm cá thể bò BO-01).
+
+    Args:
+        species: Loài vật nuôi (ví dụ: 'Heo', 'Heo Siêu Nạc', 'Bò', 'Gà', 'Dê', 'Vịt')
+        pen_id: Mã chuồng cần thêm vật nuôi (ví dụ: '123', 'PEN-A02', 'PEN-ISO-01')
+        count: Số lượng con vật cần thêm (mặc định: 1)
+        animal_id: Mã định danh nếu thêm đích danh 1 cá thể (ví dụ: 'HEO-105', 'BO-01', để trống để hệ thống tự sinh mã)
+        weight: Trọng lượng ban đầu (kg)
+        target_weight: Trọng lượng mục tiêu (kg)
+        status: Tình trạng ban đầu ('Khoe', 'Sot nhe', ...)
+    """
+    try:
+        clean_pen = pen_id.strip() if pen_id else "123"
+        pen = pens_repo.get_by_id(clean_pen)
+        if pen:
+            clean_pen = pen.get("id")
+        else:
+            pens_repo.create_pen(pen_id=clean_pen, name=f"Chuồng {clean_pen}")
+
+        if count > 1 or not animal_id.strip():
+            created_list = animals_repo.add_animals_batch(
+                count=count,
+                species=species,
+                pen_id=clean_pen,
+                base_id=animal_id if animal_id.strip() else None,
+                weight=weight,
+                target_weight=target_weight,
+                status=status,
+            )
+            _notify_websocket_safe("animal_update", {"action": "batch_create", "animals": created_list})
+            ids_str = ", ".join([a.get("id") for a in created_list])
+            return f"🐾 ĐÃ THÊM THÀNH CÔNG {len(created_list)} con {species} vào chuồng [{clean_pen}]. Danh sách mã: [{ids_str}]."
+        else:
+            created = animals_repo.add_animal(
+                animal_id=animal_id.strip(),
+                species=species,
+                pen_id=clean_pen,
+                weight=weight,
+                target_weight=target_weight,
+                status=status,
+            )
+            _notify_websocket_safe("animal_update", {"action": "create", "animal": created})
+            return f"🐾 ĐÃ THÊM THÀNH CÔNG vật nuôi '{created.get('id')}' ({species}) vào chuồng [{clean_pen}]. Cân nặng: {weight}kg."
+    except Exception as e:
+        logger.error(f"Error in add_animal: {e}")
+        return f"❌ Lỗi khi thêm vật nuôi: {str(e)}"
+
+
+def _resolve_crop(crop_name_or_id: str, pen_id: str = ""):
+    """Helper to locate a crop by ID or partial name."""
+    clean_val = str(crop_name_or_id).strip()
+    try:
+        cid = int(clean_val)
+        c = crops_repo.get_by_id(cid)
+        if c:
+            return c
+    except ValueError:
+        pass
+
+    c = crops_repo.find_by_name(clean_val, pen_id=pen_id if pen_id else None)
+    if c:
+        return c
+
+    for part in ["cà chua", "dưa lưới", "rau muống", "lúa", "dâu tây", "xà lách"]:
+        if part in clean_val.lower():
+            c = crops_repo.find_by_name(part, pen_id=pen_id if pen_id else None)
+            if c:
+                return c
+    return None
+
+
+@mcp.tool()
+def plant_crop(
+    name: str,
+    quantity: int = 1,
+    pen_id: str = "PEN-B01",
+    plant_date: str = "",
+    harvest_date: str = "",
+    status: str = "Growing",
+) -> str:
+    """
+    Trồng cây trồng mới hoặc gieo vụ mùa mới vào khu vực/chuồng trồng trọt (ví dụ: trồng 50 cây cà chua vào chuồng PEN-B01).
+
+    Args:
+        name: Tên cây trồng (ví dụ: 'Cà Chua Cherry', 'Dưa Lưới Fuji F1', 'Rau Muống', 'Lúa ST25')
+        quantity: Số lượng cây trồng (ví dụ: 50, 100, 500)
+        pen_id: Mã chuồng/khu vực nhà màng (ví dụ: 'PEN-B01', 'PEN-B02', 'Vườn01')
+        plant_date: Ngày trồng (định dạng YYYY-MM-DD, để trống sẽ lấy hôm nay)
+        harvest_date: Ngày dự kiến thu hoạch (YYYY-MM-DD, tùy chọn)
+        status: Trạng thái sinh trưởng ban đầu ('Growing', 'Flowering', 'Ripening')
+    """
+    try:
+        clean_pen = pen_id.strip() if pen_id else "PEN-B01"
+        pen = pens_repo.get_by_id(clean_pen)
+        if pen:
+            clean_pen = pen.get("id")
+        else:
+            pens_repo.create_pen(pen_id=clean_pen, name=f"Khu Trồng {clean_pen}", pen_type="crops")
+
+        created = crops_repo.create_crop(
+            name=name,
+            quantity=quantity,
+            pen_id=clean_pen,
+            plant_date=plant_date or None,
+            harvest_date=harvest_date or None,
+            status=status,
+        )
+        _notify_websocket_safe("crop_update", {"action": "create", "crop": created})
+        return (
+            f"🌱 ĐÃ TRỒNG CÂY THÀNH CÔNG: Đã thêm {quantity} cây '{name}' (ID: {created.get('id')}) "
+            f"vào khu vực [{clean_pen}]. Ngày trồng: {created.get('plant_date')}. Trạng thái: {status}."
+        )
+    except Exception as e:
+        logger.error(f"Error in plant_crop: {e}")
+        return f"❌ Lỗi khi trồng cây: {str(e)}"
+
+
+@mcp.tool()
+def manage_crop_quantity(
+    crop_name_or_id: str,
+    quantity: int,
+    action: str = "set",
+    pen_id: str = "",
+) -> str:
+    """
+    Thay đổi hoặc cập nhật số lượng cây trồng cho một vụ mùa/loại cây (ví dụ: tăng thêm 30 cây, giảm 10 cây, hoặc đặt số lượng là 100 cây).
+
+    Args:
+        crop_name_or_id: Tên cây trồng hoặc mã ID (ví dụ: 'Dưa Lưới', 'Cà Chua', 'Rau Muống', '12')
+        quantity: Số lượng cây (giá trị mới hoặc số lượng thay đổi)
+        action: Hành động: 'set' (đặt số lượng mới), 'add'/'increase' (tăng thêm), 'reduce'/'decrease' (giảm bớt)
+        pen_id: Mã chuồng nếu cần lọc chính xác theo khu vực
+    """
+    try:
+        crop = _resolve_crop(crop_name_or_id, pen_id=pen_id)
+        if not crop:
+            return f"❌ Không tìm thấy cây trồng '{crop_name_or_id}' trong trang trại."
+
+        mode = "adjust" if action.lower() in ["add", "increase", "them", "tăng", "reduce", "decrease", "giam", "giảm"] else "set"
+        delta_qty = -abs(quantity) if action.lower() in ["reduce", "decrease", "giam", "giảm"] else quantity
+
+        updated = crops_repo.update_quantity(
+            crop_id=crop["id"],
+            quantity=delta_qty,
+            mode=mode,
+        )
+        _notify_websocket_safe("crop_update", {"action": "update_quantity", "crop": updated})
+        return f"🌳 ĐÃ CẬP NHẬT SỐ LƯỢNG CÂY TRỒNG: Cây '{crop.get('name')}' (ID: {crop.get('id')}) hiện có số lượng: {updated.get('quantity')} cây."
+    except Exception as e:
+        logger.error(f"Error in manage_crop_quantity: {e}")
+        return f"❌ Lỗi khi thay đổi số lượng cây: {str(e)}"
+
+
+@mcp.tool()
+def log_crop_growth(
+    crop_name_or_id: str,
+    size: float,
+    note: str = "",
+    pen_id: str = "",
+) -> str:
+    """
+    Cập nhật kích thước, chiều cao hoặc đường kính phát triển của cây trồng (ví dụ: cây cao 25 cm, đường kính quả 8 cm).
+
+    Args:
+        crop_name_or_id: Tên cây hoặc mã ID (ví dụ: 'Dưa Lưới', 'Cà Chua', 'Rau Muống', '12')
+        size: Kích thước đo đạc được (cm)
+        note: Ghi chú giai đoạn tăng trưởng (ví dụ: 'Bắt đầu ra hoa', 'Phát triển tốt')
+        pen_id: Mã chuồng nếu cần xác định rõ khu vực
+    """
+    try:
+        crop = _resolve_crop(crop_name_or_id, pen_id=pen_id)
+        if not crop:
+            clean_pen = pen_id if pen_id else "PEN-B01"
+            crop = crops_repo.create_crop(name=crop_name_or_id, quantity=1, pen_id=clean_pen)
+
+        log_entry = crops_repo.log_growth(
+            crop_id=crop["id"],
+            size=size,
+            note=note,
+        )
+        _notify_websocket_safe("crop_growth_logs", log_entry)
+        return (
+            f"📏 ĐÃ CẬP NHẬT KÍCH THƯỚC CÂY TRỒNG: Cây '{crop.get('name')}' (ID: {crop.get('id')}) "
+            f"đạt kích thước: {size} cm. Ghi chú: {note or 'Phát triển bình thường'}."
+        )
+    except Exception as e:
+        logger.error(f"Error in log_crop_growth: {e}")
+        return f"❌ Lỗi cập nhật kích thước cây: {str(e)}"
+
+
+@mcp.tool()
+def log_crop_care(
+    crop_name_or_id: str,
+    care_type: str = "Tưới nước",
+    note: str = "",
+    pen_id: str = "",
+) -> str:
+    """
+    Ghi nhật ký chăm sóc cây trồng (ví dụ: tưới nước, bón phân NPK, tỉa lá, phun thuốc vi sinh, bắt sâu).
+
+    Args:
+        crop_name_or_id: Tên cây hoặc mã ID (ví dụ: 'Dưa Lưới', 'Cà Chua', 'Rau Muống', '12')
+        care_type: Loại công việc chăm sóc ('Tưới nước', 'Bón phân', 'Tỉa lá', 'Phun thuốc', ...)
+        note: Chi tiết liều lượng hoặc kỹ thuật chăm sóc
+        pen_id: Mã chuồng nếu cần chỉ định khu vực
+    """
+    try:
+        crop = _resolve_crop(crop_name_or_id, pen_id=pen_id)
+        if not crop:
+            clean_pen = pen_id if pen_id else "PEN-B01"
+            crop = crops_repo.create_crop(name=crop_name_or_id, quantity=1, pen_id=clean_pen)
+
+        care_entry = crops_repo.log_care(
+            crop_id=crop["id"],
+            care_type=care_type,
+            note=note,
+        )
+        _notify_websocket_safe("crop_care_logs", care_entry)
+        return (
+            f"💧 ĐÃ GHI NHẬT KÝ CHĂM SÓC: Cây '{crop.get('name')}' (ID: {crop.get('id')}) - "
+            f"Hoạt động: [{care_type}]. Nội dung: {note or 'Đã hoàn thành'}."
+        )
+    except Exception as e:
+        logger.error(f"Error in log_crop_care: {e}")
+        return f"❌ Lỗi ghi nhật ký chăm sóc cây: {str(e)}"
+
+
+@mcp.tool()
+def update_crop_disease(
+    crop_name_or_id: str,
+    disease_name: str,
+    note: str = "",
+    pen_id: str = "",
+) -> str:
+    """
+    Cập nhật bệnh hoặc sâu bệnh hại cho cây trồng, đồng thời lưu nhật ký xử lý điều trị thực vật.
+
+    Args:
+        crop_name_or_id: Tên cây hoặc mã ID (ví dụ: 'Dưa Lưới', 'Cà Chua', 'Rau Muống', '12')
+        disease_name: Tên bệnh lý hoặc sâu bệnh (ví dụ: 'Sương mai', 'Đạo ôn', 'Rầy nâu', 'Thán thư', 'Bọ trĩ')
+        note: Mô tả triệu chứng hoặc phác đồ xử lý thuốc bảo vệ thực vật
+        pen_id: Mã chuồng nếu cần
+    """
+    try:
+        crop = _resolve_crop(crop_name_or_id, pen_id=pen_id)
+        if not crop:
+            clean_pen = pen_id if pen_id else "PEN-B01"
+            crop = crops_repo.create_crop(name=crop_name_or_id, quantity=1, pen_id=clean_pen)
+
+        new_status = f"Bệnh: {disease_name}"
+        crops_repo.update_status(crop_id=crop["id"], status=new_status)
+
+        care_note = f"Ghi nhận bệnh {disease_name}. {note}".strip()
+        crops_repo.log_care(crop_id=crop["id"], care_type="Disease Treatment", note=care_note)
+
+        _notify_websocket_safe("crop_update", {"action": "disease", "crop_id": crop["id"], "disease": disease_name})
+        return (
+            f"🩺 ĐÃ CẬP NHẬT BỆNH CÂY TRỒNG: Cây '{crop.get('name')}' (ID: {crop.get('id')}) "
+            f"đã chuyển sang trạng thái [{new_status}]. Nhật ký y tế thực vật đã được lưu."
+        )
+    except Exception as e:
+        logger.error(f"Error in update_crop_disease: {e}")
+        return f"❌ Lỗi cập nhật bệnh cây trồng: {str(e)}"
 
 
 @mcp.tool()

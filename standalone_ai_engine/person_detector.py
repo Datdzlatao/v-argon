@@ -68,14 +68,26 @@ class PersonDetector:
         if self.hog is not None:
             small = cv2.resize(frame, (0, 0), fx=DETECT_SCALE, fy=DETECT_SCALE)
             gray = cv2.cvtColor(small, cv2.COLOR_BGR2GRAY)
-            boxes_raw, weights = self.hog.detectMultiScale(
-                gray,
-                winStride=HOG_WIN_STRIDE,
-                padding=HOG_PADDING,
-                scale=HOG_SCALE,
-                finalThreshold=HOG_FINAL_THRESH,
-                useMeanshiftGrouping=False
-            )
+            try:
+                boxes_raw, weights = self.hog.detectMultiScale(
+                    gray,
+                    hitThreshold=HOG_FINAL_THRESH,
+                    winStride=HOG_WIN_STRIDE,
+                    padding=HOG_PADDING,
+                    scale=HOG_SCALE,
+                    groupThreshold=2,
+                    useMeanshiftGrouping=False
+                )
+            except Exception:
+                try:
+                    boxes_raw, weights = self.hog.detectMultiScale(
+                        gray,
+                        winStride=HOG_WIN_STRIDE,
+                        padding=HOG_PADDING,
+                        scale=HOG_SCALE
+                    )
+                except Exception:
+                    boxes_raw = []
 
         detections = []
         if len(boxes_raw) > 0:

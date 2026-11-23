@@ -6,7 +6,8 @@ import {
   BACKEND_URL,
   connectAgentWebSocket, 
   triggerDailyBriefing, 
-  controlDeviceViaAPI 
+  controlDeviceViaAPI,
+  updatePenMetadataAPI 
 } from '../lib/agent-api';
 import Navbar from '../components/Navbar';
 import LeftSidebar from '../components/LeftSidebar';
@@ -16,11 +17,13 @@ import FeedAlertPinned from '../components/FeedAlertPinned';
 import FeedBriefingCard from '../components/FeedBriefingCard';
 import FeedEnvMonitor from '../components/FeedEnvMonitor';
 import FeedStaffAttendance from '../components/FeedStaffAttendance';
+import FeedPenCamera from '../components/FeedPenCamera';
 import FeedLivestockCrops from '../components/FeedLivestockCrops';
 import FeedInventory from '../components/FeedInventory';
 import MessengerChatBubble from '../components/MessengerChatBubble';
 import {
   ModalAddPen,
+  ModalConfigCamera,
   ModalAddDevice,
   ModalAddAnimal,
   ModalHealth,
@@ -72,6 +75,7 @@ export default function Home() {
   // Modals Open State
   const [modalOpen, setModalOpen] = useState({
     addPen: false,
+    configCamera: false,
     addDevice: false,
     addAnimal: false,
     health: false,
@@ -82,6 +86,22 @@ export default function Home() {
     cropTrack: false,
     cropCare: false,
   });
+
+  const handleUpdatePenCamera = async (penId: string, cameraUrl: string) => {
+    try {
+      await updatePenMetadataAPI(penId, { camera_url: cameraUrl });
+      setPens((prev) =>
+        prev.map((p) => (p.id === penId ? { ...p, camera_url: cameraUrl } : p))
+      );
+      showRealtimeNotification('pens', `Đã cập nhật IP Camera cho chuồng ${penId}`);
+    } catch (e: any) {
+      console.warn('Backend update pen notice:', e);
+      setPens((prev) =>
+        prev.map((p) => (p.id === penId ? { ...p, camera_url: cameraUrl } : p))
+      );
+      showRealtimeNotification('pens', `Đã lưu cấu hình camera: ${cameraUrl || 'Mặc định'}`);
+    }
+  };
 
   // Target item for detailed modal views
   const [selectedAnimalId, setSelectedAnimalId] = useState('');
@@ -946,7 +966,17 @@ export default function Home() {
             onNotification={(title, desc) => showRealtimeNotification('staff', desc)}
           />
 
-          {/* F. Livestock & Crops Feed Post */}
+          {/* F. IP Web Cam Chuồng/Vườn & Action Tracking (Port 8002) */}
+          <FeedPenCamera
+            currentPenId={currentPenId}
+            penName={currentPen.name}
+            penCameraUrl={currentPen.camera_url}
+            currentMode={currentMode}
+            onOpenConfigCamera={() => setModalOpen({ ...modalOpen, configCamera: true })}
+            onNotification={(title, desc) => showRealtimeNotification('action_vision', desc)}
+          />
+
+          {/* G. Livestock & Crops Feed Post */}
           <FeedLivestockCrops
             currentMode={currentMode}
             animals={animals}
@@ -1042,11 +1072,19 @@ export default function Home() {
       <ModalAddPen
         isOpen={modalOpen.addPen}
         onClose={() => setModalOpen({ ...modalOpen, addPen: false })}
-        onAdd={async (type, id, name) => {
+        onAdd={async (type, id, name, cameraUrl) => {
           const userId = session?.user?.id;
-          const newPen = { id, name, type, ...(userId ? { user_id: userId } : {}) };
+          const newPen = {
+            id,
+            name,
+            type,
+            ...(cameraUrl ? { camera_url: cameraUrl } : {}),
+            ...(userId ? { user_id: userId } : {})
+          };
           setPens((prev) => [...prev, newPen]);
-          await supabase.from('pens').insert([newPen]);
+          try {
+            await supabase.from('pens').insert([newPen]);
+          } catch {}
           try {
             await fetch(`${BACKEND_URL}/api/pens`, {
               method: 'POST',
@@ -1061,6 +1099,17 @@ export default function Home() {
           await fetchPens();
           await loadPenData(id);
           showRealtimeNotification('pens', `Đã tạo khu vực mới: ${name}`);
+        }}
+      />
+
+      <ModalConfigCamera
+        isOpen={modalOpen.configCamera}
+        onClose={() => setModalOpen({ ...modalOpen, configCamera: false })}
+        penId={currentPenId}
+        penName={currentPen.name}
+        initialCameraUrl={currentPen.camera_url}
+        onSave={async (cameraUrl) => {
+          await handleUpdatePenCamera(currentPenId, cameraUrl);
         }}
       />
 

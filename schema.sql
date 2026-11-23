@@ -13,8 +13,12 @@ CREATE TABLE IF NOT EXISTS public.pens (
     name TEXT,
     user_id UUID DEFAULT auth.uid(),
     type TEXT DEFAULT 'livestock',
+    camera_url TEXT,
     created_at TIMESTAMPTZ DEFAULT now()
 );
+
+-- Hỗ trợ nâng cấp cột camera_url nếu bảng pens đã tồn tại từ trước
+ALTER TABLE IF EXISTS public.pens ADD COLUMN IF NOT EXISTS camera_url TEXT;
 
 CREATE TABLE IF NOT EXISTS public.env_logs (
     id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
@@ -290,3 +294,34 @@ VALUES
     ('NV03', 'Lê Hoàng Long', 'Kỹ thuật viên IoT', 'PEN-A02', '0923456789'),
     ('NV04', 'Phạm Văn Cường', 'Kỹ sư nông học', 'PEN-B01', '0934567890')
 ON CONFLICT (id) DO UPDATE SET name = EXCLUDED.name, role = EXCLUDED.role;
+
+-- ==============================================================================
+-- BƯỚC 5: BẢNG ACTION_LOGS CHO ACTION TRACKING & HYBRID AI VISION
+-- ==============================================================================
+CREATE TABLE IF NOT EXISTS public.action_logs (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    action_type TEXT NOT NULL CHECK (action_type IN ('WATERING', 'FEEDING', 'FERTILIZING')),
+    trigger_source TEXT NOT NULL CHECK (trigger_source IN ('AUTO', 'MANUAL', 'AI_VISION')),
+    target_id TEXT NOT NULL,
+    duration_sec INTEGER CHECK (duration_sec IS NULL OR duration_sec >= 0),
+    status TEXT NOT NULL CHECK (status IN ('SUCCESS', 'FAILED')),
+    confidence_note TEXT,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS idx_action_logs_cooldown 
+ON public.action_logs (target_id, action_type, status, created_at DESC);
+
+CREATE INDEX IF NOT EXISTS idx_action_logs_created_at 
+ON public.action_logs (created_at DESC);
+
+ALTER TABLE public.action_logs ENABLE ROW LEVEL SECURITY;
+
+CREATE POLICY "Allow select for authenticated and anon on action_logs" 
+ON public.action_logs FOR SELECT 
+USING (true);
+
+CREATE POLICY "Allow insert for authenticated and anon on action_logs" 
+ON public.action_logs FOR INSERT 
+WITH CHECK (true);
+

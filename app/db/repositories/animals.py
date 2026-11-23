@@ -146,6 +146,125 @@ class AnimalsRepository:
 
         return {"animal": animal, "health_log": health_entry}
 
+    def add_animal(
+        self,
+        animal_id: str,
+        species: str = "Heo",
+        pen_id: str = "123",
+        weight: float = 50.0,
+        target_weight: float = 100.0,
+        feeding_status: str = "Normal",
+        status: str = "Khoe",
+    ) -> dict[str, Any]:
+        """Add a single new animal to pen."""
+        clean_id = animal_id.strip()
+        clean_pen = pen_id.strip() if pen_id else "123"
+
+        animal_data = {
+            "id": clean_id,
+            "species": species.strip(),
+            "pen_id": clean_pen,
+            "weight": float(weight),
+            "target_weight": float(target_weight),
+            "feeding_status": feeding_status,
+            "status": status,
+            "created_at": datetime.now(timezone.utc).isoformat(),
+        }
+
+        try:
+            res = self.client.table(self._table).insert(animal_data).execute()
+            if res.data and len(res.data) > 0:
+                animal_data = res.data[0]
+        except Exception as e:
+            logger.warning(f"Error inserting animal into Supabase: {e}")
+
+        # Update fallback
+        existing_idx = next((i for i, a in enumerate(_ANIMALS_FALLBACK) if str(a.get("id")).lower() == clean_id.lower()), None)
+        if existing_idx is not None:
+            _ANIMALS_FALLBACK[existing_idx] = animal_data
+        else:
+            _ANIMALS_FALLBACK.append(animal_data)
+
+        # Log creation in health_logs
+        health_entry = {
+            "animal_id": clean_id,
+            "type": "Routine",
+            "title": f"Thêm cá thể mới: {clean_id} ({species})",
+            "note": f"Nhập vào chuồng {clean_pen}, trọng lượng ban đầu: {weight}kg",
+            "created_at": datetime.now(timezone.utc).isoformat(),
+        }
+        _HEALTH_LOGS_FALLBACK.append(health_entry)
+        try:
+            self.client.table(self._health_table).insert(health_entry).execute()
+        except Exception as e:
+            logger.warning(f"Error logging animal creation to health_logs: {e}")
+
+        return animal_data
+
+    def add_animals_batch(
+        self,
+        count: int,
+        species: str = "Heo",
+        pen_id: str = "123",
+        base_id: Optional[str] = None,
+        weight: float = 50.0,
+        target_weight: float = 100.0,
+        status: str = "Khoe",
+    ) -> list[dict[str, Any]]:
+        """Add multiple animals in batch to pen, auto-generating sequential IDs."""
+        if count <= 0:
+            return []
+
+        clean_species = species.strip()
+        clean_pen = pen_id.strip() if pen_id else "123"
+
+        # Determine prefix
+        spec_low = clean_species.lower()
+        if "bò" in spec_low or "bo" in spec_low:
+            prefix = "BO-"
+        elif "gà" in spec_low or "ga" in spec_low:
+            prefix = "GA-"
+        elif "dê" in spec_low or "de" in spec_low:
+            prefix = "DE-"
+        elif "vịt" in spec_low or "vit" in spec_low:
+            prefix = "VIT-"
+        elif "cừu" in spec_low or "cuu" in spec_low:
+            prefix = "CUU-"
+        else:
+            prefix = "HEO-"
+
+        # Find existing IDs to determine starting sequence
+        all_animals = self.list_all()
+        max_seq = 100
+        for a in all_animals:
+            aid = str(a.get("id", "")).strip().upper()
+            if aid.startswith(prefix):
+                import re
+                nums = re.findall(r"\d+", aid[len(prefix):])
+                if nums:
+                    num = int(nums[0])
+                    if num > max_seq:
+                        max_seq = num
+
+        created_animals = []
+        for i in range(1, count + 1):
+            if base_id and i == 1 and count == 1:
+                cur_id = base_id.strip().upper()
+            else:
+                cur_id = f"{prefix}{max_seq + i}"
+
+            animal = self.add_animal(
+                animal_id=cur_id,
+                species=clean_species,
+                pen_id=clean_pen,
+                weight=weight,
+                target_weight=target_weight,
+                status=status,
+            )
+            created_animals.append(animal)
+
+        return created_animals
+
     def transfer_pen(
         self,
         animal_id: str,

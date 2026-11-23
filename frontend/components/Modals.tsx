@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { 
   X, 
   Plus, 
@@ -88,18 +88,20 @@ export function ModalAddPen({
 }: {
   isOpen: boolean;
   onClose: () => void;
-  onAdd: (type: string, id: string, name: string) => Promise<void>;
+  onAdd: (type: string, id: string, name: string, cameraUrl?: string) => Promise<void>;
 }) {
   const [type, setType] = useState('livestock');
   const [id, setId] = useState('');
   const [name, setName] = useState('');
+  const [cameraUrl, setCameraUrl] = useState('');
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!id || !name) return alert('Vui lòng điền đủ mã và tên khu vực');
-    await onAdd(type, id, name);
+    await onAdd(type, id, name, cameraUrl.trim() || undefined);
     setId('');
     setName('');
+    setCameraUrl('');
     onClose();
   };
 
@@ -140,6 +142,23 @@ export function ModalAddPen({
           />
         </div>
 
+        <div>
+          <label className="block text-xs font-semibold text-fb-muted mb-1 flex items-center justify-between">
+            <span>Địa Chỉ IP Web Cam Tùy Chỉnh (Tùy chọn)</span>
+            <span className="text-[10px] text-emerald-800 bg-emerald-50 px-2 py-0.5 rounded-full border border-emerald-200 font-bold">IP Cam / RTSP</span>
+          </label>
+          <input
+            type="text"
+            placeholder="VD: http://192.168.1.15:8080/video hoặc rtsp://..."
+            value={cameraUrl}
+            onChange={(e) => setCameraUrl(e.target.value)}
+            className="w-full bg-fb-bg text-xs font-mono rounded-xl px-3 py-2 border border-fb-divider focus:ring-2 focus:ring-emerald-500"
+          />
+          <p className="text-[11px] text-fb-muted mt-1">
+            Dùng IP Webcam trên điện thoại hoặc RTSP. Mỗi chuồng chỉ nhận dữ liệu từ cam của riêng khu vực đó.
+          </p>
+        </div>
+
         <div className="flex gap-2 pt-2 border-t border-fb-divider">
           <button
             type="button"
@@ -153,6 +172,99 @@ export function ModalAddPen({
             className="flex-1 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-semibold shadow cursor-pointer"
           >
             Lưu Khu Vực
+          </button>
+        </div>
+      </form>
+    </ModalWrapper>
+  );
+}
+
+// -------------------------------------------------------------
+// MODAL CẤU HÌNH IP CAMERA CHO CHUỒNG / VƯỜN ĐANG CHỌN
+// -------------------------------------------------------------
+export function ModalConfigCamera({
+  isOpen,
+  onClose,
+  penId,
+  penName,
+  initialCameraUrl,
+  onSave,
+}: {
+  isOpen: boolean;
+  onClose: () => void;
+  penId: string;
+  penName: string;
+  initialCameraUrl?: string;
+  onSave: (cameraUrl: string) => Promise<void>;
+}) {
+  const [cameraUrl, setCameraUrl] = useState(initialCameraUrl || '');
+  const [isSubmitting, setIsSubmitting] = useState(false);
+
+  useEffect(() => {
+    setCameraUrl(initialCameraUrl || '');
+  }, [initialCameraUrl, isOpen]);
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setIsSubmitting(true);
+    try {
+      await onSave(cameraUrl.trim());
+      onClose();
+    } catch (err: any) {
+      alert(err.message || 'Lỗi khi lưu IP Camera');
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  return (
+    <ModalWrapper isOpen={isOpen} onClose={onClose} title="Cấu Hình IP Web Cam Khu Vực" icon="📹">
+      <form onSubmit={handleSubmit} className="space-y-3.5">
+        <div className="bg-emerald-50/70 border border-emerald-200 rounded-xl p-3 text-xs text-emerald-900">
+          <p className="font-semibold flex items-center gap-1.5">
+            <span>🏡</span> Khu vực: <strong>{penName}</strong> ({penId})
+          </p>
+          <p className="text-[11px] text-emerald-800 mt-1">
+            Mỗi chuồng/vườn được gán một địa chỉ IP camera riêng biệt. Hệ thống Action Tracking sẽ phân tích dữ liệu trực tiếp từ camera này.
+          </p>
+        </div>
+
+        <div>
+          <label className="block text-xs font-semibold text-fb-muted mb-1 flex items-center justify-between">
+            <span>Địa Chỉ IP Web Cam / RTSP</span>
+            <span className="text-[10px] text-emerald-800 bg-emerald-50 px-2 py-0.5 rounded-full border border-emerald-200 font-bold">Port 8080/RTSP</span>
+          </label>
+          <input
+            type="text"
+            placeholder="VD: http://192.168.1.15:8080/video hoặc rtsp://..."
+            value={cameraUrl}
+            onChange={(e) => setCameraUrl(e.target.value)}
+            className="w-full bg-fb-bg text-xs font-mono rounded-xl px-3 py-2.5 border border-fb-divider focus:ring-2 focus:ring-emerald-500 font-medium"
+          />
+        </div>
+
+        <div className="space-y-1.5 text-[11px] text-fb-muted bg-fb-bg p-2.5 rounded-xl border border-fb-divider">
+          <p className="font-semibold text-fb-text">💡 Gợi ý định dạng URL:</p>
+          <p>• <strong>IP Webcam (Android):</strong> <code className="text-emerald-700 bg-emerald-50 px-1 py-0.5 rounded">http://192.168.1.X:8080/video</code></p>
+          <p>• <strong>DroidCam:</strong> <code className="text-emerald-700 bg-emerald-50 px-1 py-0.5 rounded">http://192.168.1.X:4747/video</code></p>
+          <p>• <strong>Camera IP / RTSP:</strong> <code className="text-emerald-700 bg-emerald-50 px-1 py-0.5 rounded">rtsp://admin:pass@192.168.1.X:554/stream1</code></p>
+          <p>• <strong>Webcam máy chủ:</strong> <code className="text-emerald-700 bg-emerald-50 px-1 py-0.5 rounded">0</code></p>
+        </div>
+
+        <div className="flex gap-2 pt-2 border-t border-fb-divider">
+          <button
+            type="button"
+            onClick={onClose}
+            className="flex-1 py-2 rounded-xl border border-fb-divider text-xs font-semibold hover:bg-fb-hover cursor-pointer"
+          >
+            Hủy
+          </button>
+          <button
+            type="submit"
+            disabled={isSubmitting}
+            className="flex-1 py-2 rounded-xl bg-emerald-700 hover:bg-emerald-800 disabled:opacity-50 text-white text-xs font-semibold shadow-sm cursor-pointer"
+          >
+            {isSubmitting ? 'Đang lưu...' : 'Lưu Cấu Hình Cam'}
           </button>
         </div>
       </form>

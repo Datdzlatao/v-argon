@@ -2,9 +2,11 @@ import { supabase } from './supabase';
 
 const DEFAULT_BACKEND_URL = 'https://dat-latitude-5590-2.tail2bda46.ts.net:8443';
 const DEFAULT_FACE_API_URL = 'https://dat-latitude-5590-2.tail2bda46.ts.net:10000';
+const DEFAULT_ACTION_API_URL = 'https://dat-latitude-5590-2.tail2bda46.ts.net';
 
 export const BACKEND_URL = (process.env.NEXT_PUBLIC_API_URL || DEFAULT_BACKEND_URL).replace(/\/+$/, '');
 export const FACE_API_URL = (process.env.NEXT_PUBLIC_FACE_API_URL || DEFAULT_FACE_API_URL).replace(/\/+$/, '');
+export const ACTION_API_URL = (process.env.NEXT_PUBLIC_ACTION_API_URL || DEFAULT_ACTION_API_URL).replace(/\/+$/, '');
 export const WS_URL = process.env.NEXT_PUBLIC_WS_URL || (
   BACKEND_URL.startsWith('https://')
     ? BACKEND_URL.replace(/^https:\/\//i, 'wss://') + '/ws'
@@ -825,3 +827,71 @@ export async function stopCameraDeviceAPI(): Promise<any> {
   const res = await fetch(`${BACKEND_URL}/api/camera/stop`, { method: 'POST' });
   return await res.json();
 }
+
+// ==============================================================================
+// 10. ACTION & MOTION TRACKING API (PORT 8002 - IP WEB CAM PER PEN)
+// ==============================================================================
+
+export async function getActionTrackerStatusAPI(targetId: string = 'DEFAULT'): Promise<any> {
+  try {
+    const res = await fetch(`${ACTION_API_URL}/api/tracker/status?target_id=${encodeURIComponent(targetId)}`, {
+      cache: 'no-store',
+      signal: AbortSignal.timeout(1200)
+    });
+    if (res.ok) return await res.json();
+  } catch {}
+  return null;
+}
+
+export async function getActionLogsAPI(targetId?: string, limit: number = 20): Promise<any> {
+  try {
+    const url = targetId 
+      ? `${ACTION_API_URL}/api/actions/logs?target_id=${encodeURIComponent(targetId)}&limit=${limit}`
+      : `${ACTION_API_URL}/api/actions/logs?limit=${limit}`;
+    const res = await fetch(url, { cache: 'no-store' });
+    if (res.ok) return await res.json();
+  } catch {}
+  return { count: 0, data: [] };
+}
+
+export async function configurePenCameraAPI(targetId: string, source: string): Promise<any> {
+  const res = await fetch(`${ACTION_API_URL}/api/camera/configure`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ target_id: targetId, source }),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.detail || 'Lỗi khi kết nối IP Camera');
+  }
+  return await res.json();
+}
+
+export async function stopPenCameraAPI(targetId: string): Promise<any> {
+  try {
+    const res = await fetch(`${ACTION_API_URL}/api/camera/stop`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ target_id: targetId }),
+    });
+    if (res.ok) return await res.json();
+  } catch {}
+  return { success: true };
+}
+
+export async function updatePenMetadataAPI(
+  penId: string,
+  updates: { name?: string; type?: string; camera_url?: string }
+): Promise<any> {
+  const res = await fetch(`${BACKEND_URL}/api/pens/${encodeURIComponent(penId)}`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(updates),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.detail || 'Lỗi khi cập nhật thông tin chuồng');
+  }
+  return await res.json();
+}
+

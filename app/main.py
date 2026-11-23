@@ -30,10 +30,18 @@ from app.models.schemas import (
     AgentChatResponse,
     EnvLogCreate,
     DeviceControlRequest,
+    AnimalBase,
+    AnimalCreate,
     AnimalHealthUpdate,
     AnimalTransferRequest,
+    CropBase,
+    CropCreate,
+    CropQuantityUpdate,
+    CropGrowthCreate,
+    CropCareCreate,
     FeedLogCreate,
     PenCreate,
+    PenUpdate,
     DiagnosisResponse,
     KnowledgeSearchRequest,
     KnowledgeSearchResponse,
@@ -164,11 +172,31 @@ async def create_pen(payload: PenCreate):
             name=payload.name or f"Chuồng {payload.id}",
             pen_type=payload.type or "livestock",
             user_id=payload.user_id,
+            camera_url=payload.camera_url,
         )
         await ws_manager.broadcast("pen_update", {"action": "create", "pen": created})
         return {"status": "success", "pen": created}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.patch("/api/pens/{pen_id}", tags=["Pens"])
+async def update_pen_metadata(pen_id: str, payload: PenUpdate):
+    """Cập nhật thông tin chuồng/vườn (bao gồm địa chỉ IP Camera tùy chỉnh)."""
+    try:
+        updates = {k: v for k, v in payload.model_dump().items() if v is not None}
+        if not updates:
+            raise HTTPException(status_code=400, detail="Không có thông tin cần cập nhật")
+        updated = pens_repo.update_pen(pen_id, updates)
+        if not updated:
+            raise HTTPException(status_code=404, detail=f"Không tìm thấy chuồng {pen_id}")
+        await ws_manager.broadcast("pen_update", {"action": "update", "pen": updated})
+        return {"status": "success", "pen": updated}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
 
 
 @app.get("/api/pens/{pen_id}/details", tags=["Pens"])
@@ -269,10 +297,82 @@ async def transfer_animal_api(payload: AnimalTransferRequest):
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@app.post("/api/animals", tags=["Animals"])
+async def add_animal_api(payload: AnimalCreate):
+    """Add a new animal to the farm."""
+    try:
+        created = animals_repo.add_animal(
+            animal_id=payload.id,
+            species=payload.species or "Heo",
+            pen_id=payload.pen_id or "123",
+            weight=payload.weight or 0.0,
+            target_weight=payload.target_weight or 100.0,
+            feeding_status=payload.feeding_status or "Normal",
+            status=payload.status or "Khoe",
+        )
+        await ws_manager.broadcast("animal_update", {"action": "create", "animal": created})
+        return {"status": "success", "data": created}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @app.get("/api/crops", tags=["Crops"])
 async def get_crops():
     """List all crops."""
     return crops_repo.list_all()
+
+
+@app.post("/api/crops", tags=["Crops"])
+async def create_crop_api(payload: CropCreate):
+    """Plant a new crop."""
+    try:
+        created = crops_repo.create_crop(
+            name=payload.name,
+            quantity=payload.quantity or 1,
+            pen_id=payload.pen_id or "PEN-B01",
+            plant_date=payload.plant_date.isoformat() if payload.plant_date else None,
+            harvest_date=payload.harvest_date.isoformat() if payload.harvest_date else None,
+            status=payload.status or "Growing",
+        )
+        await ws_manager.broadcast("crop_update", {"action": "create", "crop": created})
+        return {"status": "success", "data": created}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.patch("/api/crops/{crop_id}/quantity", tags=["Crops"])
+async def update_crop_quantity_api(crop_id: int, payload: CropQuantityUpdate):
+    """Update or adjust crop quantity."""
+    try:
+        mode = "adjust" if (payload.action or "").lower() in ["add", "increase", "reduce", "decrease"] else "set"
+        delta_qty = -abs(payload.quantity) if (payload.action or "").lower() in ["reduce", "decrease"] else payload.quantity
+        updated = crops_repo.update_quantity(crop_id=crop_id, quantity=delta_qty, mode=mode)
+        await ws_manager.broadcast("crop_update", {"action": "update_quantity", "crop": updated})
+        return {"status": "success", "data": updated}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/crops/{crop_id}/growth", tags=["Crops"])
+async def log_crop_growth_api(crop_id: int, payload: CropGrowthCreate):
+    """Log crop growth size/height."""
+    try:
+        log_entry = crops_repo.log_growth(crop_id=crop_id, size=payload.size, note=payload.note or "")
+        await ws_manager.broadcast("crop_growth_logs", log_entry)
+        return {"status": "success", "data": log_entry}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/crops/{crop_id}/care", tags=["Crops"])
+async def log_crop_care_api(crop_id: int, payload: CropCareCreate):
+    """Log crop care activity."""
+    try:
+        care_entry = crops_repo.log_care(crop_id=crop_id, care_type=payload.type, note=payload.note or "")
+        await ws_manager.broadcast("crop_care_logs", care_entry)
+        return {"status": "success", "data": care_entry}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 @app.post("/api/feed/log", tags=["Feed"])

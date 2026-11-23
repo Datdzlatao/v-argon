@@ -15,6 +15,7 @@ SUPABASE_ANON_KEY="sb_publishable_PdB8mBs-zLvYDpEXP-ds4A_YSktC8lm"
 API_URL="https://dat-latitude-5590-2.tail2bda46.ts.net:8443"
 WS_URL="wss://dat-latitude-5590-2.tail2bda46.ts.net:8443/ws"
 FACE_API_URL="https://dat-latitude-5590-2.tail2bda46.ts.net:10000"
+ACTION_API_URL="https://dat-latitude-5590-2.tail2bda46.ts.net"
 
 # Kiểm tra nếu chưa link dự án thì hướng dẫn hoặc link
 if [ ! -d ".vercel" ]; then
@@ -29,11 +30,14 @@ npx vercel --prod \
     --build-env NEXT_PUBLIC_API_URL="$API_URL" \
     --build-env NEXT_PUBLIC_WS_URL="$WS_URL" \
     --build-env NEXT_PUBLIC_FACE_API_URL="$FACE_API_URL" \
+    --build-env NEXT_PUBLIC_ACTION_API_URL="$ACTION_API_URL" \
     --env NEXT_PUBLIC_SUPABASE_URL="$SUPABASE_URL" \
     --env NEXT_PUBLIC_SUPABASE_ANON_KEY="$SUPABASE_ANON_KEY" \
     --env NEXT_PUBLIC_API_URL="$API_URL" \
     --env NEXT_PUBLIC_WS_URL="$WS_URL" \
-    --env NEXT_PUBLIC_FACE_API_URL="$FACE_API_URL"
+    --env NEXT_PUBLIC_FACE_API_URL="$FACE_API_URL" \
+    --env NEXT_PUBLIC_ACTION_API_URL="$ACTION_API_URL"
+
 
 echo ""
 echo "=========================================================="

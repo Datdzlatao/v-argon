@@ -18,6 +18,12 @@ from app.mcp.mcp_server import (
     control_device,
     log_feeding,
     update_animal_health,
+    add_animal,
+    plant_crop,
+    manage_crop_quantity,
+    log_crop_growth,
+    log_crop_care,
+    update_crop_disease,
     manage_inventory,
     manage_schedule,
     create_system_alert,
@@ -98,18 +104,30 @@ CÁC CÔNG CỤ (MCP TOOLS) BẠN CÓ:
 3. `manage_pen(action, pen_id, name, pen_type)`: Tạo chuồng mới hoặc cập nhật thông tin chuồng.
 4. `control_device(action, device_name, pen_id)`: Bật/tắt thiết bị IoT (quạt, đèn sưởi, máy phun sương) tại chuồng được chỉ định.
 5. `log_feeding(pen_id, food_name, amount)`: Ghi nhận cho vật nuôi ăn tại chuồng và tự động trừ kho thức ăn.
-6. `update_animal_health(animal_id, status, note, health_type)`: Cập nhật sức khỏe (Khỏe, Sốt, Bệnh, Cách ly).
-7. `manage_inventory(action, name, quantity, unit, category)`: Nhập kho, xuất kho hoặc tạo mới thức ăn/vật tư.
-8. `manage_schedule(action, task_name, target_date, pen_id, note)`: Lên lịch hoặc hoàn thành công việc theo chuồng.
-9. `create_system_alert(alert_type, message, pen_id)`: Phát cảnh báo nguy cơ chuồng trại qua WebSocket.
-10. `search_agricultural_knowledge(query, limit)`: TRA CỨU CƠ SỞ TRI THỨC RAG (Pinecone Knowledge Base) về phác đồ điều trị bệnh gia súc/cây trồng, thông tin thuốc thú y, bệnh lý nông nghiệp.
-11. `diagnose_agricultural_disease(symptoms_or_description, species)`: CHẨN ĐOÁN BỆNH LÝ & TRÍCH XUẤT PHÁC ĐỒ ĐIỀU TRỊ chuyên sâu từ cơ sở tri thức RAG.
-12. `get_staff_list(pen_id)`: Tra cứu danh sách nhân sự trang trại, phân công ca trực và chuồng phụ trách.
-13. `check_in_staff_face(staff_id, pen_id, note)`: Điểm danh vào ca làm việc cho nhân viên bằng FaceID nhận diện khuôn mặt.
-14. `get_today_attendance_summary()`: Xem tổng hợp tình hình điểm danh nhân sự hôm nay (ai đã có mặt, ai chưa đến).
+6. `update_animal_health(animal_id, status, note, health_type)`: CẬP NHẬT SỨC KHỎE HOẶC BỆNH TẬT (Khỏe, Sốt nhẹ, Sốt cao, Bệnh Tai Xanh, Dịch tả heo, Tiêu chảy PED, Cách ly...) cho vật nuôi và lưu nhật ký điều trị.
+7. `add_animal(species, pen_id, count, animal_id, weight, target_weight, status)`: THÊM CÁ THỂ MỚI HOẶC THÊM SỐ LƯỢNG VẬT NUÔI theo đàn vào chuồng trại (ví dụ: thêm 5 con heo vào chuồng PEN-A02, thêm cá thể bò BO-01).
+8. `plant_crop(name, quantity, pen_id, plant_date, harvest_date, status)`: TRỒNG CÂY TRỒNG MỚI hoặc gieo hạt vào khu vực/chuồng trồng trọt (ví dụ: trồng 50 cây cà chua vào chuồng PEN-B01).
+9. `manage_crop_quantity(crop_name_or_id, quantity, action, pen_id)`: THAY ĐỔI HOẶC ĐIỀU CHỈNH SỐ LƯỢNG CÂY TRỒNG (đặt mới 'set', tăng 'add', hoặc giảm 'reduce').
+10. `log_crop_growth(crop_name_or_id, size, note, pen_id)`: CẬP NHẬT KÍCH THƯỚC / CHIỀU CAO tăng trưởng của cây trồng (cm).
+11. `log_crop_care(crop_name_or_id, care_type, note, pen_id)`: GHI NHẬT KÝ CHĂM SÓC CÂY TRỒNG (tưới nước, bón phân, tỉa cành, bắt sâu...).
+12. `update_crop_disease(crop_name_or_id, disease_name, note, pen_id)`: CẬP NHẬT BỆNH LÝ CÂY TRỒNG (sương mai, đạo ôn, rầy nâu...) và lưu nhật ký điều trị thực vật.
+13. `manage_inventory(action, name, quantity, unit, category)`: Nhập kho, xuất kho hoặc tạo mới thức ăn/vật tư.
+14. `manage_schedule(action, task_name, target_date, pen_id, note)`: Lên lịch hoặc hoàn thành công việc theo chuồng.
+15. `create_system_alert(alert_type, message, pen_id)`: Phát cảnh báo nguy cơ chuồng trại qua WebSocket.
+16. `search_agricultural_knowledge(query, limit)`: TRA CỨU CƠ SỞ TRI THỨC RAG (Pinecone Knowledge Base) về phác đồ điều trị bệnh gia súc/cây trồng, thông tin thuốc thú y, bệnh lý nông nghiệp.
+17. `diagnose_agricultural_disease(symptoms_or_description, species)`: CHẨN ĐOÁN BỆNH LÝ & TRÍCH XUẤT PHÁC ĐỒ ĐIỀU TRỊ chuyên sâu từ cơ sở tri thức RAG.
+18. `get_staff_list(pen_id)`: Tra cứu danh sách nhân sự trang trại, phân công ca trực và chuồng phụ trách.
+19. `check_in_staff_face(staff_id, pen_id, note)`: Điểm danh vào ca làm việc cho nhân viên bằng FaceID nhận diện khuôn mặt.
+20. `get_today_attendance_summary()`: Xem tổng hợp tình hình điểm danh nhân sự hôm nay (ai đã có mặt, ai chưa đến).
 
 NHIỆM VỤ CỦA BẠN:
 - Hệ thống hỗ trợ RẤT NHIỀU CHUỒNG KHÁC NHAU (ví dụ: Chuồng Heo Khu A1 '123', Chuồng Heo Khu A2 'PEN-A02', Khu Cách Ly 'PEN-ISO-01', Nhà Màng 'PEN-B01'...).
+- Khi người dùng muốn trồng cây hoặc thay đổi số lượng cây trồng, bạn PHẢI gọi `plant_crop` hoặc `manage_crop_quantity`.
+- Khi người dùng muốn thêm con vật hoặc tăng số lượng đàn vật nuôi, bạn PHẢI gọi `add_animal`.
+- Khi người dùng muốn cập nhật kích thước, chiều cao cây trồng, bạn PHẢI gọi `log_crop_growth`.
+- Khi người dùng muốn ghi chép chăm sóc cây (tưới nước, bón phân, tỉa cành...), bạn PHẢI gọi `log_crop_care`.
+- Khi người dùng báo cáo cây trồng bị bệnh hoặc sâu bệnh, bạn PHẢI gọi `update_crop_disease`.
+- Khi người dùng cập nhật bệnh tật hoặc sức khỏe của vật nuôi, bạn PHẢI gọi `update_animal_health`.
 - Khi người dùng muốn đổi chuồng, chuyển chuồng cho vật nuôi, hoặc kiểm tra bất kỳ chuồng nào, hãy gọi tool tương ứng với mã `pen_id` chính xác.
 - Khi người dùng hỏi về bệnh tật của vật nuôi (sốt, tai xanh, tiêu chảy PED, lở mồm long móng...) hoặc sâu bệnh cây trồng (đạo ôn, rầy nâu, sương mai...), bạn PHẢI gọi `search_agricultural_knowledge` hoặc `diagnose_agricultural_disease` để trích xuất phác đồ y tế chuẩn xác và hướng dẫn người dùng chi tiết, an tâm.
 - Luôn trả lời bằng tiếng Việt lịch sự, thân thiện, rõ ràng về mã chuồng thao tác.
@@ -220,14 +238,30 @@ NHIỆM VỤ CỦA BẠN:
             executed_tools.append({"tool": "get_pen_status", "args": {"pen_id": pen_id}, "result": result})
             reply_lines.append(f"🤖 [Smart Farm Agent]: Thông tin chi tiết chuồng [{pen_id}]:\n{result}")
 
-        # 5. Action: SỨC KHỎE VẬT NUÔI
-        elif any(k in msg for k in ["sốt", "ốm", "bệnh", "bỏ ăn", "khỏe", "tiêu chảy", "sức khỏe"]) and any(k in msg for k in ["heo", "bò", "vật nuôi", "cá thể"]):
+        # 5. Action: SỨC KHỎE VẬT NUÔI & CẬP NHẬT BỆNH VẬT NUÔI
+        elif any(k in msg for k in ["sốt", "ốm", "bệnh", "bỏ ăn", "khỏe", "tiêu chảy", "sức khỏe", "tai xanh", "dịch tả", "ped", "lở mồm"]) and any(k in msg for k in ["heo", "bò", "vật nuôi", "cá thể"]) and not any(k in msg for k in ["cây", "dưa", "rau", "cà chua", "lúa"]):
             id_match = re.findall(r"(heo[\-_]?[0-9a-zA-Z]+|bò[\-_]?[0-9a-zA-Z]+|[a-zA-Z]+[\-_][0-9a-zA-Z]+)", msg)
             animal_id = id_match[0].upper() if id_match else "HEO-102"
-            status = "Khoe" if "khỏe" in msg else ("Bo an" if "bỏ ăn" in msg else "Sot")
 
-            result = update_animal_health(animal_id=animal_id, status=status, note=user_message)
-            executed_tools.append({"tool": "update_animal_health", "args": {"animal_id": animal_id, "status": status, "note": user_message}, "result": result})
+            if "tai xanh" in msg:
+                status = "Bệnh Tai Xanh"
+            elif "dịch tả" in msg or "asf" in msg:
+                status = "Dịch Tả Heo"
+            elif "tiêu chảy" in msg or "ped" in msg:
+                status = "Tiêu Chảy PED"
+            elif "lở mồm" in msg:
+                status = "Lở Mồm Long Móng"
+            elif "sốt" in msg:
+                status = "Sốt Cao" if "cao" in msg else "Sốt Nhẹ"
+            elif "khỏe" in msg or "khoẻ" in msg:
+                status = "Khoe"
+            elif "bỏ ăn" in msg:
+                status = "Bo An"
+            else:
+                status = "Benh"
+
+            result = update_animal_health(animal_id=animal_id, status=status, note=user_message, health_type="Disease")
+            executed_tools.append({"tool": "update_animal_health", "args": {"animal_id": animal_id, "status": status, "note": user_message, "health_type": "Disease"}, "result": result})
             reply_lines.append(f"🤖 [Smart Farm Agent]: {result}")
 
         # 6. Action: XUẤT NHẬP KHO
@@ -245,7 +279,134 @@ NHIỆM VỤ CỦA BẠN:
             pens_str = get_pens_list()
             reply_lines.append(f"🤖 [Smart Farm Agent]: Danh sách toàn bộ các chuồng trong trang trại:\n{pens_str}")
 
-        # 8. Action: RAG TRA CỨU TRI THỨC NÔNG NGHIỆP & CHẨN ĐOÁN BỆNH (TÍCH HỢP TỪ WORKFLOW STEM)
+        # 8. Action: TRỒNG CÂY TRỒNG MỚI
+        elif any(k in msg for k in ["trồng cây", "trồng", "gieo hạt", "gieo", "xuống giống", "thêm cây"]) and not any(k in msg for k in ["kích thước", "chiều cao", "chăm sóc", "tưới", "bón phân"]):
+            crop_name = "Cà Chua Cherry"
+            for cn in ["dưa lưới", "cà chua", "rau muống", "lúa", "dâu tây", "xà lách", "ngô", "bắp"]:
+                if cn in msg:
+                    crop_name = cn.title()
+                    break
+
+            nums = re.findall(r"\d+", msg)
+            qty = int(nums[0]) if nums else 50
+
+            pen_id = "PEN-B01"
+            if "b02" in msg or "b2" in msg:
+                pen_id = "PEN-B02"
+            elif "vườn" in msg or "vuon" in msg:
+                v_match = re.findall(r"(vườn\s*[0-9a-zA-Z]+|vuon\s*[0-9a-zA-Z]+)", msg)
+                pen_id = v_match[0] if v_match else "Vườn01"
+            else:
+                pen_match = re.findall(r"chuồng\s*([a-zA-Z0-9_\-]+)", msg)
+                if pen_match:
+                    pen_id = pen_match[0]
+
+            result = plant_crop(name=crop_name, quantity=qty, pen_id=pen_id)
+            executed_tools.append({"tool": "plant_crop", "args": {"name": crop_name, "quantity": qty, "pen_id": pen_id}, "result": result})
+            reply_lines.append(f"🤖 [Smart Farm Agent]: {result}")
+
+        # 9. Action: THAY ĐỔI SỐ LƯỢNG CÂY
+        elif any(k in msg for k in ["số lượng cây", "đổi số lượng", "thay đổi số lượng", "tăng cây", "giảm cây", "tăng số lượng cây", "giảm số lượng cây"]):
+            crop_name = "Cà Chua Cherry"
+            for cn in ["dưa lưới", "cà chua", "rau muống", "lúa", "dâu tây", "xà lách"]:
+                if cn in msg:
+                    crop_name = cn.title()
+                    break
+
+            nums = re.findall(r"\d+", msg)
+            qty = int(nums[0]) if nums else 20
+            action = "add" if any(k in msg for k in ["tăng", "thêm", "cộng"]) else ("reduce" if any(k in msg for k in ["giảm", "bớt", "trừ"]) else "set")
+
+            result = manage_crop_quantity(crop_name_or_id=crop_name, quantity=qty, action=action)
+            executed_tools.append({"tool": "manage_crop_quantity", "args": {"crop_name_or_id": crop_name, "quantity": qty, "action": action}, "result": result})
+            reply_lines.append(f"🤖 [Smart Farm Agent]: {result}")
+
+        # 10. Action: THÊM CON VẬT / SỐ LƯỢNG CON VẬT
+        elif any(k in msg for k in ["thêm con", "thêm heo", "thêm bò", "nhập đàn", "thêm vật nuôi", "thêm gia súc"]) or (("thêm" in msg or "nhập" in msg) and any(k in msg for k in ["heo", "bò", "gà", "dê", "vịt"])):
+            species = "Heo"
+            if "bò" in msg or "bo" in msg:
+                species = "Bò"
+            elif "gà" in msg or "ga" in msg:
+                species = "Gà"
+            elif "dê" in msg or "de" in msg:
+                species = "Dê"
+            elif "vịt" in msg or "vit" in msg:
+                species = "Vịt"
+
+            nums = re.findall(r"\d+", msg)
+            count = int(nums[0]) if nums else 1
+
+            pen_id = "123"
+            if "a02" in msg or "a2" in msg:
+                pen_id = "PEN-A02"
+            elif "cách ly" in msg or "iso" in msg:
+                pen_id = "PEN-ISO-01"
+            else:
+                pen_match = re.findall(r"chuồng\s*([a-zA-Z0-9_\-]+)", msg)
+                if pen_match:
+                    pen_id = pen_match[0]
+
+            id_match = re.findall(r"(heo[\-_]?[0-9a-zA-Z]+|bò[\-_]?[0-9a-zA-Z]+|[a-zA-Z]+[\-_][0-9a-zA-Z]+)", msg)
+            animal_id = id_match[0].upper() if id_match and count == 1 else ""
+
+            result = add_animal(species=species, pen_id=pen_id, count=count, animal_id=animal_id)
+            executed_tools.append({"tool": "add_animal", "args": {"species": species, "pen_id": pen_id, "count": count, "animal_id": animal_id}, "result": result})
+            reply_lines.append(f"🤖 [Smart Farm Agent]: {result}")
+
+        # 11. Action: CẬP NHẬT KÍCH THƯỚC CÂY TRỒNG
+        elif any(k in msg for k in ["kích thước", "chiều cao", "đường kính", "đo cây", "tăng trưởng", "phát triển"]) and any(k in msg for k in ["cây", "dưa", "rau", "cà chua", "lúa", "cm"]):
+            crop_name = "Rau Muống"
+            for cn in ["dưa lưới", "cà chua", "rau muống", "lúa", "dâu tây", "xà lách"]:
+                if cn in msg:
+                    crop_name = cn.title()
+                    break
+
+            nums = re.findall(r"[-+]?\d*\.\d+|\d+", msg)
+            size = float(nums[0]) if nums else 20.0
+
+            result = log_crop_growth(crop_name_or_id=crop_name, size=size, note=user_message)
+            executed_tools.append({"tool": "log_crop_growth", "args": {"crop_name_or_id": crop_name, "size": size, "note": user_message}, "result": result})
+            reply_lines.append(f"🤖 [Smart Farm Agent]: {result}")
+
+        # 12. Action: CHĂM SÓC CÂY TRỒNG
+        elif any(k in msg for k in ["chăm sóc", "tưới nước", "bón phân", "tỉa lá", "tỉa cành", "bắt sâu", "làm cỏ"]) and any(k in msg for k in ["cây", "dưa", "rau", "cà chua", "lúa", "vườn"]):
+            crop_name = "Rau Muống"
+            for cn in ["dưa lưới", "cà chua", "rau muống", "lúa", "dâu tây", "xà lách"]:
+                if cn in msg:
+                    crop_name = cn.title()
+                    break
+
+            care_type = "Tưới nước"
+            if "bón phân" in msg or "phân" in msg:
+                care_type = "Bón phân"
+            elif "tỉa" in msg:
+                care_type = "Tỉa lá"
+            elif "phun thuốc" in msg or "sâu" in msg:
+                care_type = "Phun thuốc phòng sâu bệnh"
+
+            result = log_crop_care(crop_name_or_id=crop_name, care_type=care_type, note=user_message)
+            executed_tools.append({"tool": "log_crop_care", "args": {"crop_name_or_id": crop_name, "care_type": care_type, "note": user_message}, "result": result})
+            reply_lines.append(f"🤖 [Smart Farm Agent]: {result}")
+
+        # 13. Action: CẬP NHẬT BỆNH CÂY TRỒNG
+        elif ("bệnh" in msg or "sâu" in msg) and any(k in msg for k in ["cây", "dưa", "rau", "cà chua", "lúa", "lá", "sương mai", "đạo ôn", "rầy nâu", "thán thư"]) and not any(k in msg for k in ["heo", "bò"]):
+            crop_name = "Dưa Lưới"
+            for cn in ["dưa lưới", "cà chua", "rau muống", "lúa", "dâu tây", "xà lách"]:
+                if cn in msg:
+                    crop_name = cn.title()
+                    break
+
+            disease_name = "Sương mai"
+            for dn in ["sương mai", "đạo ôn", "rầy nâu", "thán thư", "phấn trắng", "đốm lá", "héo xanh"]:
+                if dn in msg:
+                    disease_name = dn.title()
+                    break
+
+            result = update_crop_disease(crop_name_or_id=crop_name, disease_name=disease_name, note=user_message)
+            executed_tools.append({"tool": "update_crop_disease", "args": {"crop_name_or_id": crop_name, "disease_name": disease_name, "note": user_message}, "result": result})
+            reply_lines.append(f"🤖 [Smart Farm Agent]: {result}")
+
+        # 14. Action: RAG TRA CỨU TRI THỨC NÔNG NGHIỆP & CHẨN ĐOÁN BỆNH (TÍCH HỢP TỪ WORKFLOW STEM)
         elif any(k in msg for k in [
             "chẩn đoán", "bệnh gì", "phác đồ", "cách chữa", "điều trị", "triệu chứng", "thuốc trị",
             "tai xanh", "dịch tả", "asf", "prrs", "ped", "lở mồm", "đạo ôn", "sương mai", "rầy nâu",
@@ -267,7 +428,7 @@ NHIỆM VỤ CỦA BẠN:
                 f"{rag_diag.get('answer')}"
             )
 
-        # 9. Action: QUẢN LÝ NHÂN SỰ & ĐIỂM DANH FACE ID
+        # 15. Action: QUẢN LÝ NHÂN SỰ & ĐIỂM DANH FACE ID
         elif any(k in msg for k in ["nhân sự", "nhân viên", "điểm danh", "ai đang trực", "vào ca", "chấm công", "faceid", "khuôn mặt"]):
             if any(k in msg for k in ["điểm danh", "vào ca", "chấm công"]) and any(k in msg for k in ["nv", "tech", "cho", "bằng"]):
                 id_match = re.findall(r"(nv[0-9]+|tech[\-_]?[0-9]+)", msg)
@@ -341,6 +502,12 @@ NHIỆM VỤ CỦA BẠN:
                 control_device,
                 log_feeding,
                 update_animal_health,
+                add_animal,
+                plant_crop,
+                manage_crop_quantity,
+                log_crop_growth,
+                log_crop_care,
+                update_crop_disease,
                 manage_inventory,
                 manage_schedule,
                 create_system_alert,

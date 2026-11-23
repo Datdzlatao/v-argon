@@ -15,10 +15,18 @@ class PenBase(BaseModel):
     name: Optional[str] = Field(default="Chuồng Mới", description="Tên định danh chuồng")
     type: Optional[str] = Field(default="livestock", description="Phân loại: livestock, crops, greenhouse")
     user_id: Optional[str] = Field(default=None, description="UUID của chủ sở hữu chuồng")
+    camera_url: Optional[str] = Field(default=None, description="URL IP Webcam / RTSP stream của chuồng/vườn này")
 
 
 class PenCreate(PenBase):
     pass
+
+
+class PenUpdate(BaseModel):
+    name: Optional[str] = Field(default=None, description="Tên định danh chuồng")
+    type: Optional[str] = Field(default=None, description="Phân loại: livestock, crops, greenhouse")
+    camera_url: Optional[str] = Field(default=None, description="URL IP Webcam / RTSP stream")
+
 
 
 class PenInDB(PenBase):
@@ -82,6 +90,10 @@ class AnimalBase(BaseModel):
     status: Optional[str] = Field(default="Khoe", description="Trạng thái sức khỏe (Khoe, Sot, Benh, Cach ly)")
 
 
+class AnimalCreate(AnimalBase):
+    pass
+
+
 class AnimalHealthUpdate(BaseModel):
     animal_id: str
     status: str = Field(..., description="Trạng thái mới: Khoe, Sot, Cach ly, ...")
@@ -110,6 +122,25 @@ class CropBase(BaseModel):
     plant_date: Optional[date] = Field(default_factory=date.today)
     harvest_date: Optional[date] = None
     status: Optional[str] = Field(default="Growing", description="Giai đoạn: Growing, Flowering, Ripening, Harvested")
+
+
+class CropCreate(CropBase):
+    pass
+
+
+class CropQuantityUpdate(BaseModel):
+    quantity: int = Field(..., description="Số lượng cây")
+    action: Optional[str] = Field(default="set", description="Hành động: set, add, reduce")
+
+
+class CropGrowthCreate(BaseModel):
+    size: float = Field(..., gt=0, description="Kích thước / Chiều cao (cm)")
+    note: Optional[str] = Field(default="", description="Ghi chú tăng trưởng")
+
+
+class CropCareCreate(BaseModel):
+    type: str = Field(default="Tưới nước", description="Loại chăm sóc (Tưới nước, Bón phân, Tỉa lá...)")
+    note: Optional[str] = Field(default="", description="Chi tiết chăm sóc")
 
 
 class CropInDB(CropBase):
