@@ -1,0 +1,6 @@
+[
+    {
+        "merged": "com.smartfarm.app-debug-64:/xml_network_security_config.xml.flat",
+        "source": "com.smartfarm.app-main-66:/xml/network_security_config.xml"
+    }
+]

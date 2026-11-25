@@ -39,6 +39,10 @@ a.txt
 1.txt
 database.txt
 .agent
-/android
+smart_farm.db 
+start_apis.sh
+start.sh
+stop_apis.sh
+stop.sh
 
 

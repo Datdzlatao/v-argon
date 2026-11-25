@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="farm_accent">#A16207</color>
+    <color name="farm_background">#F0FDF4</color>
+    <color name="farm_card_border">#BBF7D0</color>
+    <color name="farm_destructive">#DC2626</color>
+    <color name="farm_primary">#15803D</color>
+    <color name="farm_secondary">#22C55E</color>
+    <color name="farm_surface">#FFFFFF</color>
+    <color name="farm_text_main">#14532D</color>
+    <color name="farm_text_muted">#475569</color>
+    <string name="app_name">Nông Trại Thông Minh</string>
+    <string name="cultivation_tab">Trồng Trọt</string>
+    <string name="demo_mode">Chế độ Dùng Thử</string>
+    <string name="livestock_tab">Chăn Nuôi</string>
+    <string name="login">Đăng Nhập</string>
+    <string name="register">Đăng Ký</string>
+    <style name="Theme.SmartFarm" parent="android:Theme.Material.Light.NoActionBar">
+        <item name="android:statusBarColor">#15803D</item>
+        <item name="android:navigationBarColor">#F0FDF4</item>
+    </style>
+</resources>

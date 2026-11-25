@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- ui-ux-pro-max: Organic Biophilic Palette -->
+    <color name="farm_primary">#15803D</color>
+    <color name="farm_secondary">#22C55E</color>
+    <color name="farm_accent">#A16207</color>
+    <color name="farm_background">#F0FDF4</color>
+    <color name="farm_surface">#FFFFFF</color>
+    <color name="farm_card_border">#BBF7D0</color>
+    <color name="farm_destructive">#DC2626</color>
+    <color name="farm_text_main">#14532D</color>
+    <color name="farm_text_muted">#475569</color>
+</resources>
