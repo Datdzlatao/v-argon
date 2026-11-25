@@ -1,0 +1,19 @@
+# ==============================================================================
+# V-ARGON: Action Tracking & Hybrid AI Vision Dependencies
+# ==============================================================================
+
+# Backend & Database
+fastapi>=0.115.0
+uvicorn[standard]>=0.30.0
+supabase>=2.10.0
+pydantic>=2.8.0
+python-dotenv>=1.0.0
+requests>=2.31.0
+
+# Edge Vision & AI
+opencv-python>=4.8.0
+mediapipe>=0.10.14
+google-genai>=0.1.0
+google-generativeai>=0.8.0
+pillow>=10.0.0
+numpy>=1.24.0

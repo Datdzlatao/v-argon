@@ -1,0 +1,728 @@
+<!DOCTYPE html>
+<html lang="vi" class="dark">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>V-ARGON | Trung Tâm Kiểm Chứng Nông Nghiệp Thông Minh</title>
+  <!-- Tailwind CSS via CDN -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      darkMode: 'class',
+      theme: {
+        extend: {
+          colors: {
+            brand: {
+              50: '#ecfdf5',
+              500: '#10b981',
+              600: '#059669',
+              700: '#047857',
+            }
+          }
+        }
+      }
+    }
+  </script>
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+  <style>
+    @keyframes pulse-slow {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.4; }
+    }
+    .animate-pulse-slow {
+      animation: pulse-slow 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+    }
+  </style>
+</head>
+<body class="bg-slate-950 text-slate-100 min-h-screen font-sans antialiased selection:bg-emerald-500 selection:text-white">
+
+  <!-- NAVBAR -->
+  <header class="border-b border-slate-800 bg-slate-900/80 backdrop-blur sticky top-0 z-50">
+    <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between">
+      <div class="flex items-center space-x-3">
+        <div class="w-10 h-10 rounded-xl bg-gradient-to-tr from-emerald-600 to-teal-400 flex items-center justify-center shadow-lg shadow-emerald-500/20">
+          <i class="fa-solid fa-seedling text-white text-xl"></i>
+        </div>
+        <div>
+          <h1 class="text-lg font-bold tracking-tight text-white flex items-center gap-2">
+            V-ARGON
+            <span class="text-xs font-medium px-2 py-0.5 rounded-full bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
+              AIoT Vision v1.0
+            </span>
+          </h1>
+          <p class="text-xs text-slate-400">Action Tracking & Hybrid AI Vision Test Suite</p>
+        </div>
+      </div>
+
+      <!-- System Health Pills -->
+      <div class="flex items-center space-x-3">
+        <div class="flex items-center space-x-2 px-3 py-1.5 rounded-lg bg-slate-800/80 border border-slate-700 text-xs">
+          <span class="w-2.5 h-2.5 rounded-full bg-emerald-500 animate-pulse-slow"></span>
+          <span class="text-slate-300 font-medium" id="status-backend">Backend: Online</span>
+        </div>
+        <div class="flex items-center space-x-2 px-3 py-1.5 rounded-lg bg-slate-800/80 border border-slate-700 text-xs">
+          <i class="fa-solid fa-database text-teal-400 text-xs"></i>
+          <span class="text-slate-300 font-medium" id="status-db">Supabase: Sẵn sàng</span>
+        </div>
+      </div>
+    </div>
+  </header>
+
+  <!-- MAIN CONTAINER -->
+  <main class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6 space-y-6">
+
+    <!-- TOP ROW: LIVE WEBCAM AI STREAM & FSM STATUS -->
+    <div class="grid grid-cols-1 lg:grid-cols-12 gap-6">
+
+      <!-- LEFT: VIDEO STREAM -->
+      <div class="lg:col-span-7 bg-slate-900 border border-slate-800 rounded-2xl p-4 shadow-xl flex flex-col justify-between">
+        <div class="flex items-center justify-between mb-3">
+          <div class="flex items-center space-x-2">
+            <span class="w-3 h-3 rounded-full bg-red-500 animate-ping"></span>
+            <h2 class="font-semibold text-sm text-slate-200 uppercase tracking-wider flex items-center gap-2">
+              <i class="fa-solid fa-video text-emerald-400"></i>
+              Live Camera Stream & MediaPipe Pose HUD
+            </h2>
+          </div>
+          <div class="flex items-center space-x-2">
+            <button id="btn-toggle-cam" onclick="toggleCamera()" class="text-xs px-3 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 transition">
+              <i class="fa-solid fa-pause mr-1"></i> Tạm dừng
+            </button>
+            <span class="text-xs text-slate-500">Source: Webcam 0</span>
+          </div>
+        </div>
+
+        <!-- Video Container -->
+        <div class="relative bg-slate-950 rounded-xl overflow-hidden aspect-video border border-slate-800/80 flex items-center justify-center">
+          <canvas id="cam-canvas" class="w-full h-full object-contain"></canvas>
+          <img id="cam-feed" src="" alt="Live Camera Feed" class="w-full h-full object-contain hidden"
+               onerror="handleCameraError()">
+          <div id="cam-badge" class="absolute top-2.5 right-2.5 px-2 py-0.5 rounded text-[10px] font-mono bg-emerald-950/80 border border-emerald-600/60 text-emerald-300 flex items-center gap-1.5 shadow">
+            <span class="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-ping"></span>
+            <span id="cam-proto-text">⚡ WS Zero-Lag</span>
+            <span id="cam-fps-text">• 0 FPS</span>
+          </div>
+          <div id="cam-fallback" class="hidden absolute inset-0 flex flex-col items-center justify-center p-6 text-center bg-slate-950/90">
+            <i class="fa-solid fa-video-slash text-4xl text-slate-600 mb-3"></i>
+            <p class="text-sm font-medium text-slate-300">Không thể kết nối luồng Video trực tiếp</p>
+            <p class="text-xs text-slate-500 mt-1 max-w-sm">
+              Có thể Webcam đang được dùng bởi script khác (vision_tracker.py) hoặc chưa cấp quyền.
+            </p>
+            <button onclick="retryCamera()" class="mt-4 px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-xs text-white rounded-lg transition font-medium">
+              <i class="fa-solid fa-arrow-rotate-right mr-1"></i> Thử lại
+            </button>
+          </div>
+        </div>
+
+        <div class="mt-3 flex items-center justify-between text-xs text-slate-400">
+          <span>* Xương & HUD được xử lý trực tiếp tại Edge bằng MediaPipe Tasks</span>
+          <span class="text-emerald-400 font-mono">Bấm 'q' nếu chạy script độc lập</span>
+        </div>
+      </div>
+
+      <!-- RIGHT: FSM STATE MACHINE MONITOR -->
+      <div class="lg:col-span-5 bg-slate-900 border border-slate-800 rounded-2xl p-5 shadow-xl flex flex-col justify-between">
+        <div>
+          <div class="flex items-center justify-between border-b border-slate-800 pb-3 mb-4">
+            <h2 class="font-semibold text-sm text-slate-200 uppercase tracking-wider flex items-center gap-2">
+              <i class="fa-solid fa-diagram-project text-cyan-400"></i>
+              Máy Trạng Thái Hữu Hạn (FSM)
+            </h2>
+            <span id="badge-fsm" class="px-2.5 py-1 text-xs font-bold rounded-lg bg-slate-800 text-slate-300 border border-slate-700">
+              IDLE
+            </span>
+          </div>
+
+          <!-- Realtime Metrics Grid -->
+          <div class="space-y-3">
+            <!-- Hip Visibility -->
+            <div>
+              <div class="flex justify-between text-xs mb-1">
+                <span class="text-slate-400">Độ tin cậy Hông (Hip Vis):</span>
+                <span id="val-hip-vis" class="font-mono font-bold text-slate-200">0.00</span>
+              </div>
+              <div class="w-full bg-slate-950 rounded-full h-2 overflow-hidden border border-slate-800">
+                <div id="bar-hip-vis" class="bg-red-500 h-2 transition-all duration-300" style="width: 0%"></div>
+              </div>
+              <div class="flex justify-between text-[10px] text-slate-500 mt-0.5">
+                <span>&lt;0.4: SUSPENDED (Che khuất)</span>
+                <span>&gt;0.7: RESUMED (Lộ diện)</span>
+              </div>
+            </div>
+
+            <!-- Wrist Visibility -->
+            <div>
+              <div class="flex justify-between text-xs mb-1">
+                <span class="text-slate-400">Độ tin cậy Cổ tay (Wrist Vis):</span>
+                <span id="val-wrist-vis" class="font-mono font-bold text-slate-200">0.00</span>
+              </div>
+              <div class="w-full bg-slate-950 rounded-full h-2 overflow-hidden border border-slate-800">
+                <div id="bar-wrist-vis" class="bg-yellow-500 h-2 transition-all duration-300" style="width: 0%"></div>
+              </div>
+            </div>
+
+            <!-- Geometry Posture Cards -->
+            <div class="grid grid-cols-2 gap-2 pt-2">
+              <div class="bg-slate-950/70 p-2.5 rounded-xl border border-slate-800">
+                <span class="text-[11px] text-slate-400 block">Góc Lưng (Torso Angle)</span>
+                <span id="val-torso-angle" class="text-sm font-bold font-mono text-cyan-400">--°</span>
+                <span class="text-[10px] text-slate-500 block">&lt;120°: Gập người</span>
+              </div>
+              <div class="bg-slate-950/70 p-2.5 rounded-xl border border-slate-800">
+                <span class="text-[11px] text-slate-400 block">Vươn Tay (Wrist Reach)</span>
+                <span id="val-wrist-reach" class="text-sm font-bold font-mono text-cyan-400">--</span>
+                <span class="text-[10px] text-slate-500 block">&gt;0.25: Thò tay xuống</span>
+              </div>
+            </div>
+
+            <div class="grid grid-cols-2 gap-2">
+              <div class="bg-slate-950/70 p-2.5 rounded-xl border border-slate-800 flex items-center justify-between">
+                <div>
+                  <span class="text-[11px] text-slate-400 block">Tư thế Thao tác</span>
+                  <span id="val-bending" class="text-xs font-bold text-slate-400">KHÔNG</span>
+                </div>
+                <i id="icon-bending" class="fa-solid fa-person-walking text-slate-600 text-lg"></i>
+              </div>
+              <div class="bg-slate-950/70 p-2.5 rounded-xl border border-slate-800 flex items-center justify-between">
+                <div>
+                  <span class="text-[11px] text-slate-400 block">Debounce Cooldown</span>
+                  <span id="val-cooldown" class="text-xs font-bold text-emerald-400 font-mono">SẴN SÀNG</span>
+                </div>
+                <i class="fa-solid fa-clock text-slate-600 text-lg"></i>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Last AI Action Card -->
+        <div class="mt-4 p-3 rounded-xl bg-slate-950/90 border border-slate-800">
+          <div class="flex items-center justify-between mb-1">
+            <span class="text-[11px] text-slate-400 uppercase font-semibold flex items-center gap-1.5">
+              <i class="fa-solid fa-brain text-purple-400"></i>
+              Gemini VLM Phân Tích
+            </span>
+            <span id="val-ai-action" class="text-xs font-bold px-2 py-0.5 rounded bg-slate-800 text-slate-300">None</span>
+          </div>
+          <p id="val-ai-reason" class="text-xs text-slate-400 italic">Chưa có ảnh kích hoạt gần đây.</p>
+        </div>
+      </div>
+    </div>
+
+    <!-- MIDDLE ROW: COOLDOWN TESTING & HARDWARE SIMULATION -->
+    <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+
+      <!-- TEST COOLDOWN & TRIGGER PREVENTION -->
+      <div class="bg-slate-900 border border-slate-800 rounded-2xl p-5 shadow-xl">
+        <h2 class="font-semibold text-sm text-slate-200 uppercase tracking-wider mb-3 flex items-center gap-2">
+          <i class="fa-solid fa-shield-halved text-emerald-400"></i>
+          Kiểm Thử Chống Xung Đột Cooldown (/api/actions/trigger)
+        </h2>
+        <p class="text-xs text-slate-400 mb-4">
+          Nếu lệnh <strong class="text-emerald-400">AUTO</strong> được kích hoạt trong vòng 2 giờ sau khi đã có hành động thành công (từ tay người hoặc AI), hệ thống sẽ từ chối để chống tưới/cho ăn chồng chéo. Lệnh <strong class="text-amber-400">MANUAL</strong> sẽ được Bypass.
+        </p>
+
+        <form id="form-trigger" onsubmit="handleTriggerSubmit(event)" class="space-y-3">
+          <div class="grid grid-cols-2 gap-3">
+            <div>
+              <label class="block text-xs font-medium text-slate-400 mb-1">Loại hành động</label>
+              <select id="trigger-action" class="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-200 focus:outline-none focus:border-emerald-500">
+                <option value="WATERING">WATERING (Tưới nước)</option>
+                <option value="FEEDING">FEEDING (Cho ăn)</option>
+                <option value="FERTILIZING">FERTILIZING (Bón phân)</option>
+              </select>
+            </div>
+            <div>
+              <label class="block text-xs font-medium text-slate-400 mb-1">Nguồn kích hoạt</label>
+              <select id="trigger-source" class="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-200 focus:outline-none focus:border-emerald-500">
+                <option value="AUTO">AUTO (Tự động theo lịch)</option>
+                <option value="MANUAL">MANUAL (Người bấm ép chạy)</option>
+              </select>
+            </div>
+          </div>
+
+          <div class="grid grid-cols-2 gap-3">
+            <div>
+              <label class="block text-xs font-medium text-slate-400 mb-1">Mã khu vực (Target ID)</label>
+              <input type="text" id="trigger-target" value="GARDEN_01" class="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-200 focus:outline-none focus:border-emerald-500">
+            </div>
+            <div>
+              <label class="block text-xs font-medium text-slate-400 mb-1">Thời gian Cooldown (giây)</label>
+              <input type="number" id="trigger-cooldown" value="7200" class="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-200 focus:outline-none focus:border-emerald-500">
+            </div>
+          </div>
+
+          <button type="submit" class="w-full py-2.5 px-4 rounded-xl bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white font-medium text-xs shadow-lg shadow-emerald-500/10 transition flex items-center justify-center gap-2">
+            <i class="fa-solid fa-paper-plane"></i> Gửi Yêu Cầu Kích Hoạt
+          </button>
+        </form>
+
+        <!-- Response Alert Box -->
+        <div id="trigger-result" class="mt-4 hidden p-3 rounded-xl border text-xs"></div>
+      </div>
+
+      <!-- TEST IP WEB CAM & ACTION VALIDATION (REPLACED ESP32) -->
+      <div class="bg-slate-900 border border-slate-800 rounded-2xl p-5 shadow-xl flex flex-col justify-between">
+        <div>
+          <h2 class="font-semibold text-sm text-slate-200 uppercase tracking-wider mb-2 flex items-center gap-2">
+            <i class="fa-solid fa-camera text-teal-400"></i>
+            Thiết Lập IP Web Cam Tùy Chỉnh Cho Từng Chuồng / Vườn
+          </h2>
+          <p class="text-xs text-slate-400 mb-3">
+            Hệ thống sử dụng trực tiếp luồng IP Web Cam (ứng dụng điện thoại cổng 8080 hoặc RTSP) thay thế hoàn toàn ESP32. Mỗi chuồng sẽ nhận diện độc lập.
+          </p>
+
+          <!-- Input IP Cam & Target ID -->
+          <div class="space-y-2.5 mb-3 bg-slate-950/80 p-3 rounded-xl border border-slate-800">
+            <div>
+              <label class="block text-[11px] font-semibold text-slate-300 mb-1">Mã Chuồng / Vườn (Target ID)</label>
+              <input type="text" id="ip-cam-target" value="GARDEN_01" placeholder="VD: CHUONG_01, VUON_01, 123" class="w-full bg-slate-900 border border-slate-700 rounded-lg px-2.5 py-1.5 text-xs text-slate-200 font-mono focus:border-teal-400 focus:outline-none">
+            </div>
+            <div>
+              <label class="block text-[11px] font-semibold text-slate-300 mb-1">Địa chỉ IP Web Cam / RTSP</label>
+              <div class="flex gap-2">
+                <input type="text" id="ip-cam-source" value="http://10.17.220.234:8080/video" placeholder="http://<ip>:8080/video hoặc 0" class="flex-1 bg-slate-900 border border-slate-700 rounded-lg px-2.5 py-1.5 text-xs text-slate-200 font-mono focus:border-teal-400 focus:outline-none">
+                <button onclick="connectIPCam()" class="px-3 py-1.5 bg-teal-600 hover:bg-teal-500 text-white rounded-lg text-xs font-semibold transition shrink-0 flex items-center gap-1">
+                  <i class="fa-solid fa-link"></i> Kết Nối
+                </button>
+              </div>
+            </div>
+          </div>
+
+          <!-- Quick Action Validation Buttons -->
+          <span class="text-[11px] font-semibold text-slate-400 block mb-1.5">Kiểm tra ghi nhận hành động:</span>
+          <div class="grid grid-cols-1 sm:grid-cols-3 gap-2">
+            <button onclick="validateActionIPCam('WATERING')" class="p-2 text-left rounded-lg bg-slate-950 hover:bg-slate-800 border border-slate-800 hover:border-emerald-500/50 transition">
+              <div class="flex items-center justify-between mb-0.5">
+                <span class="text-xs font-semibold text-emerald-400">Tưới Nước</span>
+                <i class="fa-solid fa-faucet-drip text-emerald-400 text-xs"></i>
+              </div>
+              <p class="text-[10px] text-slate-400">Xác thực tưới rau/cây</p>
+            </button>
+
+            <button onclick="validateActionIPCam('FEEDING')" class="p-2 text-left rounded-lg bg-slate-950 hover:bg-slate-800 border border-slate-800 hover:border-teal-500/50 transition">
+              <div class="flex items-center justify-between mb-0.5">
+                <span class="text-xs font-semibold text-teal-400">Cho Ăn</span>
+                <i class="fa-solid fa-bowl-food text-teal-400 text-xs"></i>
+              </div>
+              <p class="text-[10px] text-slate-400">Xác thực cho gia súc</p>
+            </button>
+
+            <button onclick="validateActionIPCam('FERTILIZING')" class="p-2 text-left rounded-lg bg-slate-950 hover:bg-slate-800 border border-slate-800 hover:border-amber-500/50 transition">
+              <div class="flex items-center justify-between mb-0.5">
+                <span class="text-xs font-semibold text-amber-400">Bón Phân</span>
+                <i class="fa-solid fa-seedling text-amber-400 text-xs"></i>
+              </div>
+              <p class="text-[10px] text-slate-400">Xác thực bón gốc</p>
+            </button>
+          </div>
+        </div>
+
+        <div id="sim-result" class="mt-3 hidden p-2 rounded-xl border text-xs"></div>
+      </div>
+
+    </div>
+
+    <!-- BOTTOM ROW: RECENT ACTION LOGS (SUPABASE REALTIME TABLE) -->
+    <div class="bg-slate-900 border border-slate-800 rounded-2xl p-5 shadow-xl">
+      <div class="flex items-center justify-between mb-4">
+        <div>
+          <h2 class="font-semibold text-sm text-slate-200 uppercase tracking-wider flex items-center gap-2">
+            <i class="fa-solid fa-clock-rotate-left text-amber-400"></i>
+            Lịch Sử Ghi Log Hành Động (Supabase `action_logs`)
+          </h2>
+          <p class="text-xs text-slate-400">Dữ liệu thực tế từ Supabase phản ánh cả 3 nguồn: AUTO, MANUAL, và AI_VISION</p>
+        </div>
+        <div class="flex items-center space-x-2">
+          <button onclick="fetchLogs()" class="px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-medium border border-slate-700 transition flex items-center gap-1.5">
+            <i class="fa-solid fa-rotate"></i> Làm mới
+          </button>
+          <label class="flex items-center space-x-2 text-xs text-slate-400 cursor-pointer">
+            <input type="checkbox" id="chk-auto-refresh" checked class="rounded bg-slate-950 border-slate-800 text-emerald-500 focus:ring-0">
+            <span>Tự cập nhật (3s)</span>
+          </label>
+        </div>
+      </div>
+
+      <div class="overflow-x-auto rounded-xl border border-slate-800 bg-slate-950/50">
+        <table class="w-full text-left text-xs">
+          <thead class="bg-slate-950 text-slate-400 uppercase text-[10px] tracking-wider border-b border-slate-800">
+            <tr>
+              <th class="px-4 py-3">Thời gian (UTC)</th>
+              <th class="px-4 py-3">Hành động</th>
+              <th class="px-4 py-3">Nguồn</th>
+              <th class="px-4 py-3">Target</th>
+              <th class="px-4 py-3">Thời lượng</th>
+              <th class="px-4 py-3">Trạng thái</th>
+              <th class="px-4 py-3">Ghi chú đối chiếu / Lý do</th>
+            </tr>
+          </thead>
+          <tbody id="logs-tbody" class="divide-y divide-slate-800/60 font-mono">
+            <tr>
+              <td colspan="7" class="px-4 py-8 text-center text-slate-500">Đang tải dữ liệu log từ Supabase...</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+  </main>
+
+  <!-- JAVASCRIPT LOGIC -->
+  <script>
+    let cameraActive = true;
+
+    function getActiveTarget() {
+      const input = document.getElementById('ip-cam-target');
+      return (input && input.value.trim()) ? input.value.trim() : 'GARDEN_01';
+    }
+
+    function getActiveSource() {
+      const input = document.getElementById('ip-cam-source');
+      return (input && input.value.trim()) ? input.value.trim() : '';
+    }
+
+    let camWs = null;
+    let wsFrameCount = 0;
+    let wsFpsInterval = null;
+
+    function startWsStream() {
+      stopWsStream();
+      const canvas = document.getElementById('cam-canvas');
+      const img = document.getElementById('cam-feed');
+      const protoText = document.getElementById('cam-proto-text');
+      const fpsText = document.getElementById('cam-fps-text');
+      const targetId = getActiveTarget();
+      const source = getActiveSource();
+
+      const proto = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+      const wsUrl = `${proto}//${window.location.host}/ws/video_feed?target_id=${encodeURIComponent(targetId)}&source=${encodeURIComponent(source)}`;
+
+      wsFrameCount = 0;
+      if (wsFpsInterval) clearInterval(wsFpsInterval);
+      wsFpsInterval = setInterval(() => {
+        if (fpsText) fpsText.innerText = `• ${wsFrameCount} FPS`;
+        wsFrameCount = 0;
+      }, 1000);
+
+      try {
+        camWs = new WebSocket(wsUrl);
+        camWs.binaryType = 'blob';
+
+        camWs.onopen = () => {
+          canvas.classList.remove('hidden');
+          img.classList.add('hidden');
+          if (protoText) protoText.innerText = '⚡ WS Zero-Lag';
+          document.getElementById('cam-fallback').classList.add('hidden');
+        };
+
+        camWs.onmessage = async (e) => {
+          if (e.data instanceof Blob) {
+            wsFrameCount++;
+            try {
+              const bmp = await createImageBitmap(e.data);
+              if (canvas.width !== bmp.width || canvas.height !== bmp.height) {
+                canvas.width = bmp.width;
+                canvas.height = bmp.height;
+              }
+              const ctx = canvas.getContext('2d');
+              if (ctx) ctx.drawImage(bmp, 0, 0);
+              bmp.close();
+            } catch (err) {}
+          }
+        };
+
+        camWs.onerror = () => {
+          fallbackToHttp();
+        };
+
+        camWs.onclose = () => {
+          if (cameraActive) {
+            // Reconnect sau 2 giây nếu còn bật
+            setTimeout(() => { if (cameraActive && !camWs) startWsStream(); }, 2000);
+          }
+        };
+      } catch (err) {
+        fallbackToHttp();
+      }
+    }
+
+    function fallbackToHttp() {
+      const canvas = document.getElementById('cam-canvas');
+      const img = document.getElementById('cam-feed');
+      const protoText = document.getElementById('cam-proto-text');
+      canvas.classList.add('hidden');
+      img.classList.remove('hidden');
+      if (protoText) protoText.innerText = 'HTTP Fallback';
+      const targetId = getActiveTarget();
+      const source = getActiveSource();
+      img.src = `/video_feed?target_id=${encodeURIComponent(targetId)}&source=${encodeURIComponent(source)}&t=${Date.now()}`;
+    }
+
+    function stopWsStream() {
+      if (wsFpsInterval) {
+        clearInterval(wsFpsInterval);
+        wsFpsInterval = null;
+      }
+      if (camWs) {
+        try { camWs.close(); } catch (e) {}
+        camWs = null;
+      }
+    }
+
+    function toggleCamera() {
+      const btn = document.getElementById('btn-toggle-cam');
+      if (cameraActive) {
+        stopWsStream();
+        document.getElementById('cam-feed').src = "";
+        btn.innerHTML = '<i class="fa-solid fa-play mr-1"></i> Bật lại';
+        cameraActive = false;
+      } else {
+        cameraActive = true;
+        startWsStream();
+        btn.innerHTML = '<i class="fa-solid fa-pause mr-1"></i> Tạm dừng';
+      }
+    }
+
+    function handleCameraError() {
+      document.getElementById('cam-fallback').classList.remove('hidden');
+    }
+
+    function retryCamera() {
+      document.getElementById('cam-fallback').classList.add('hidden');
+      if (cameraActive) startWsStream();
+    }
+
+    async function connectIPCam() {
+      const targetId = getActiveTarget();
+      const source = getActiveSource();
+      if (!source) return alert("Vui lòng nhập địa chỉ IP Cam hoặc RTSP");
+
+      try {
+        const res = await fetch('/api/camera/configure', {
+          method: 'POST',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({ target_id: targetId, source: source })
+        });
+        const data = await res.json();
+        alert(data.message || `Đã kết nối IP Cam cho ${targetId}`);
+        retryCamera();
+      } catch (e) {
+        alert("Lỗi cấu hình IP Cam: " + e.message);
+      }
+    }
+
+    // 1. POLLING FSM TRACKER STATUS
+    async function updateTrackerStatus() {
+      try {
+        const targetId = getActiveTarget();
+        const res = await fetch(`/api/tracker/status?target_id=${encodeURIComponent(targetId)}`);
+        if (!res.ok) return;
+        const data = await res.json();
+
+        // Badge FSM
+        const badge = document.getElementById('badge-fsm');
+        badge.innerText = data.fsm_state;
+        const stateClasses = {
+          "IDLE": "bg-slate-800 text-slate-300 border-slate-700",
+          "SUSPENDED": "bg-red-500/20 text-red-400 border-red-500/40 animate-pulse",
+          "RESUMED": "bg-yellow-500/20 text-yellow-400 border-yellow-500/40",
+          "TRIGGERED": "bg-purple-500/20 text-purple-400 border-purple-500/40 font-black",
+          "COOLDOWN": "bg-orange-500/20 text-orange-400 border-orange-500/40"
+        };
+        badge.className = "px-2.5 py-1 text-xs font-bold rounded-lg border " + (stateClasses[data.fsm_state] || "bg-slate-800 text-slate-300");
+
+        // Metrics
+        const m = data.metrics || {};
+        const hipVis = m.hip_vis || 0.0;
+        const wristVis = m.wrist_vis || 0.0;
+
+        document.getElementById('val-hip-vis').innerText = hipVis.toFixed(2);
+        const barHip = document.getElementById('bar-hip-vis');
+        barHip.style.width = Math.min(100, Math.round(hipVis * 100)) + '%';
+        barHip.className = 'h-2 transition-all duration-300 ' + (hipVis > 0.7 ? 'bg-emerald-500' : (hipVis >= 0.4 ? 'bg-yellow-500' : 'bg-red-500'));
+
+        document.getElementById('val-wrist-vis').innerText = wristVis.toFixed(2);
+        const barWrist = document.getElementById('bar-wrist-vis');
+        barWrist.style.width = Math.min(100, Math.round(wristVis * 100)) + '%';
+        barWrist.className = 'h-2 transition-all duration-300 ' + (wristVis > 0.7 ? 'bg-emerald-500' : 'bg-red-500');
+
+        document.getElementById('val-torso-angle').innerText = (m.torso_angle || 180.0).toFixed(1) + '°';
+        document.getElementById('val-wrist-reach').innerText = (m.wrist_reach || 0.0).toFixed(2);
+
+        // Bending
+        const valBending = document.getElementById('val-bending');
+        const iconBending = document.getElementById('icon-bending');
+        if (m.is_bending) {
+          valBending.innerText = "CÚI GẬP & VƯƠN";
+          valBending.className = "text-xs font-bold text-emerald-400";
+          iconBending.className = "fa-solid fa-person-praying text-emerald-400 text-lg";
+        } else {
+          valBending.innerText = "KHÔNG";
+          valBending.className = "text-xs font-bold text-slate-400";
+          iconBending.className = "fa-solid fa-person-walking text-slate-600 text-lg";
+        }
+
+        // Cooldown
+        const valCooldown = document.getElementById('val-cooldown');
+        if (data.cooldown_remaining > 0) {
+          valCooldown.innerText = data.cooldown_remaining + "s (Khóa)";
+          valCooldown.className = "text-xs font-bold text-orange-400 font-mono";
+        } else {
+          valCooldown.innerText = "SẴN SÀNG";
+          valCooldown.className = "text-xs font-bold text-emerald-400 font-mono";
+        }
+
+        // AI Action
+        document.getElementById('val-ai-action').innerText = data.last_action || "None";
+        document.getElementById('val-ai-reason').innerText = data.last_action_reason || "Chưa có ảnh kích hoạt gần đây.";
+
+      } catch (err) {
+        // console.error("Tracker status update failed", err);
+      }
+    }
+
+    // 2. TRIGGER TEST FORM SUBMIT
+    async function handleTriggerSubmit(e) {
+      e.preventDefault();
+      const actionType = document.getElementById('trigger-action').value;
+      const triggerSource = document.getElementById('trigger-source').value;
+      const targetId = document.getElementById('trigger-target').value;
+      const cooldownSec = parseInt(document.getElementById('trigger-cooldown').value) || 7200;
+
+      const resBox = document.getElementById('trigger-result');
+      resBox.className = "mt-4 p-3 rounded-xl border text-xs bg-slate-950 border-slate-800 text-slate-400";
+      resBox.innerHTML = '<i class="fa-solid fa-spinner fa-spin mr-2"></i> Đang kiểm tra điều kiện Cooldown...';
+      resBox.classList.remove('hidden');
+
+      try {
+        const resp = await fetch('/api/actions/trigger', {
+          method: 'POST',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({
+            action_type: actionType,
+            trigger_source: triggerSource,
+            target_id: targetId,
+            cooldown_seconds: cooldownSec
+          })
+        });
+
+        const data = await resp.json();
+        if (data.allowed) {
+          const isBypass = data.status_code === 'MANUAL_BYPASS';
+          resBox.className = "mt-4 p-3 rounded-xl border text-xs bg-emerald-950/40 border-emerald-500/40 text-emerald-200";
+          resBox.innerHTML = `
+            <div class="flex items-center gap-2 font-bold mb-1">
+              <i class="fa-solid fa-circle-check text-emerald-400"></i>
+              ${isBypass ? 'CHẤP THUẬN: MANUAL BYPASS COOLDOWN' : 'CHẤP THUẬN LỆNH AUTO'}
+            </div>
+            <p>${data.message}</p>
+          `;
+        } else {
+          resBox.className = "mt-4 p-3 rounded-xl border text-xs bg-red-950/40 border-red-500/40 text-red-200";
+          resBox.innerHTML = `
+            <div class="flex items-center gap-2 font-bold mb-1">
+              <i class="fa-solid fa-circle-xmark text-red-400"></i>
+              TỪ CHỐI LỆNH: COOLDOWN ĐANG KÍCH HOẠT
+            </div>
+            <p>${data.message}</p>
+            <div class="mt-2 text-[11px] text-red-300/80">
+              Hành động gần nhất: <strong>${data.last_action_source}</strong> vào lúc ${data.last_action_time}
+            </div>
+          `;
+        }
+        fetchLogs();
+      } catch (err) {
+        resBox.className = "mt-4 p-3 rounded-xl border text-xs bg-red-950/40 border-red-500/40 text-red-200";
+        resBox.innerHTML = `<div class="font-bold">Lỗi gọi API: ${err.message}</div>`;
+      }
+    }
+
+    // 3. VALIDATE ACTION VIA IP WEB CAM
+    async function validateActionIPCam(actionType) {
+      const simBox = document.getElementById('sim-result');
+      simBox.className = "mt-3 p-2.5 rounded-xl border text-xs bg-slate-950 border-slate-800 text-slate-400";
+      simBox.innerHTML = '<i class="fa-solid fa-spinner fa-spin mr-2"></i> Đang ghi nhận kiểm chứng từ IP Web Cam AI Vision...';
+      simBox.classList.remove('hidden');
+
+      const targetId = getActiveTarget();
+      try {
+        const resp = await fetch('/api/actions/validate', {
+          method: 'POST',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({
+            target_id: targetId,
+            action_type: actionType,
+            note: `IP Web Cam: Đã xác thực thành công hành vi ${actionType} tại ${targetId}`
+          })
+        });
+
+        const data = await resp.json();
+        simBox.className = "mt-3 p-2.5 rounded-xl border text-xs bg-emerald-950/30 border-emerald-500/40 text-emerald-300";
+        simBox.innerHTML = `
+          <div class="font-bold flex items-center gap-2 mb-0.5">
+            <i class="fa-solid fa-check text-emerald-400"></i>
+            Xác Thực IP Web Cam Thành Công
+          </div>
+          <div>${data.message || 'Đã ghi nhận log vào hệ thống.'}</div>
+        `;
+        fetchLogs();
+      } catch (err) {
+        simBox.className = "mt-3 p-2.5 rounded-xl border text-xs bg-red-950/40 border-red-500/40 text-red-200";
+        simBox.innerHTML = `Lỗi: ${err.message}`;
+      }
+    }
+
+    // 4. FETCH ACTION LOGS TABLE
+    async function fetchLogs() {
+      try {
+        const resp = await fetch('/api/actions/logs?limit=15');
+        if (!resp.ok) return;
+        const res = await resp.json();
+        const logs = res.data || [];
+        const tbody = document.getElementById('logs-tbody');
+
+        if (logs.length === 0) {
+          tbody.innerHTML = `<tr><td colspan="7" class="px-4 py-8 text-center text-slate-500">Chưa có bản ghi nào trong bảng action_logs</td></tr>`;
+          return;
+        }
+
+        tbody.innerHTML = logs.map(row => {
+          const isSuccess = row.status === 'SUCCESS';
+          const badgeClass = isSuccess ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20' : 'bg-red-500/10 text-red-400 border-red-500/20';
+          
+          let sourceBadge = 'bg-slate-800 text-slate-300';
+          if (row.trigger_source === 'AI_VISION') sourceBadge = 'bg-purple-500/20 text-purple-300 border-purple-500/30 border';
+          else if (row.trigger_source === 'AUTO') sourceBadge = 'bg-blue-500/20 text-blue-300 border-blue-500/30 border';
+          else if (row.trigger_source === 'MANUAL') sourceBadge = 'bg-amber-500/20 text-amber-300 border-amber-500/30 border';
+
+          return `
+            <tr class="hover:bg-slate-900/50 transition">
+              <td class="px-4 py-2.5 text-slate-400">${new Date(row.created_at).toLocaleTimeString()} <span class="text-[10px] text-slate-600 block">${new Date(row.created_at).toLocaleDateString()}</span></td>
+              <td class="px-4 py-2.5 font-bold text-slate-200">${row.action_type}</td>
+              <td class="px-4 py-2.5"><span class="px-2 py-0.5 rounded text-[10px] font-semibold ${sourceBadge}">${row.trigger_source}</span></td>
+              <td class="px-4 py-2.5 text-slate-300">${row.target_id}</td>
+              <td class="px-4 py-2.5 text-slate-400">${row.duration_sec ? row.duration_sec + 's' : '--'}</td>
+              <td class="px-4 py-2.5"><span class="px-2 py-0.5 rounded text-[10px] font-semibold border ${badgeClass}">${row.status}</span></td>
+              <td class="px-4 py-2.5 text-slate-400 font-sans max-w-xs truncate" title="${row.confidence_note || ''}">${row.confidence_note || '--'}</td>
+            </tr>
+          `;
+        }).join('');
+      } catch (err) {
+        // console.error("Failed to fetch logs", err);
+      }
+    }
+
+    // Interval timers
+    setInterval(updateTrackerStatus, 500); // 2 times per second
+    setInterval(() => {
+      if (document.getElementById('chk-auto-refresh').checked) {
+        fetchLogs();
+      }
+    }, 3000);
+
+    // Initial fetch
+    fetchLogs();
+    startWsStream();
+  </script>
+</body>
+</html>
