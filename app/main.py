@@ -173,6 +173,7 @@ async def create_pen(payload: PenCreate):
             pen_type=payload.type or "livestock",
             user_id=payload.user_id,
             camera_url=payload.camera_url,
+            webcam_url=payload.webcam_url,
         )
         await ws_manager.broadcast("pen_update", {"action": "create", "pen": created})
         return {"status": "success", "pen": created}
@@ -948,36 +949,6 @@ async def staff_live_scan_api(payload: StaffLiveScanRequest):
     except Exception as e:
         logger.error(f"Live scan error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
-
-
-@app.get("/api/camera/video_feed", tags=["Camera Stream"])
-async def get_camera_video_feed(overlay: bool = Query(True)):
-    """
-    Proxy luồng video MJPEG trực tiếp từ Standalone AI Engine (Port 8001).
-    Hỗ trợ nhúng trực tiếp vào thẻ <img src="/api/camera/video_feed">.
-    """
-    vision_base = settings.VISION_ENGINE_URL.rstrip('/')
-    vision_url = f"{vision_base}/api/v1/camera/video_feed?overlay={str(overlay).lower()}"
-    try:
-        client = httpx.AsyncClient(timeout=None)
-        req = client.build_request("GET", vision_url)
-        resp = await client.send(req, stream=True)
-
-        async def stream_generator():
-            try:
-                async for chunk in resp.aiter_bytes():
-                    yield chunk
-            finally:
-                await resp.aclose()
-                await client.aclose()
-
-        return StreamingResponse(
-            stream_generator(),
-            media_type="multipart/x-mixed-replace; boundary=frame"
-        )
-    except Exception as e:
-        logger.warning(f"Error proxying camera feed from {vision_url}: {e}")
-        raise HTTPException(status_code=503, detail="Camera Stream service unavailable")
 
 
 @app.get("/api/camera/status", tags=["Camera Stream"])

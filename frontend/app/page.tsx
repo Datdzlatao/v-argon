@@ -87,19 +87,19 @@ export default function Home() {
     cropCare: false,
   });
 
-  const handleUpdatePenCamera = async (penId: string, cameraUrl: string) => {
+  const handleUpdatePenCameras = async (penId: string, cameraUrl: string, webcamUrl: string) => {
     try {
-      await updatePenMetadataAPI(penId, { camera_url: cameraUrl });
+      await updatePenMetadataAPI(penId, { camera_url: cameraUrl, webcam_url: webcamUrl });
       setPens((prev) =>
-        prev.map((p) => (p.id === penId ? { ...p, camera_url: cameraUrl } : p))
+        prev.map((p) => (p.id === penId ? { ...p, camera_url: cameraUrl, webcam_url: webcamUrl } : p))
       );
-      showRealtimeNotification('pens', `Đã cập nhật IP Camera cho chuồng ${penId}`);
+      showRealtimeNotification('pens', `Đã cập nhật 2 luồng camera cho chuồng ${penId}`);
     } catch (e: any) {
       console.warn('Backend update pen notice:', e);
       setPens((prev) =>
-        prev.map((p) => (p.id === penId ? { ...p, camera_url: cameraUrl } : p))
+        prev.map((p) => (p.id === penId ? { ...p, camera_url: cameraUrl, webcam_url: webcamUrl } : p))
       );
-      showRealtimeNotification('pens', `Đã lưu cấu hình camera: ${cameraUrl || 'Mặc định'}`);
+      showRealtimeNotification('pens', `Đã lưu cấu hình 2 luồng camera: IP Cam & Webcam`);
     }
   };
 
@@ -966,11 +966,12 @@ export default function Home() {
             onNotification={(title, desc) => showRealtimeNotification('staff', desc)}
           />
 
-          {/* F. IP Web Cam Chuồng/Vườn & Action Tracking (Port 8002) */}
+          {/* F. Camera Giám Sát Chuồng Trại 2 Luồng (IP Cam & Webcam) & AI Action Tracking (Port 8002) */}
           <FeedPenCamera
             currentPenId={currentPenId}
             penName={currentPen.name}
             penCameraUrl={currentPen.camera_url}
+            penWebcamUrl={currentPen.webcam_url}
             currentMode={currentMode}
             onOpenConfigCamera={() => setModalOpen({ ...modalOpen, configCamera: true })}
             onNotification={(title, desc) => showRealtimeNotification('action_vision', desc)}
@@ -1072,13 +1073,14 @@ export default function Home() {
       <ModalAddPen
         isOpen={modalOpen.addPen}
         onClose={() => setModalOpen({ ...modalOpen, addPen: false })}
-        onAdd={async (type, id, name, cameraUrl) => {
+        onAdd={async (type, id, name, cameraUrl, webcamUrl) => {
           const userId = session?.user?.id;
           const newPen = {
             id,
             name,
             type,
             ...(cameraUrl ? { camera_url: cameraUrl } : {}),
+            webcam_url: webcamUrl || '0',
             ...(userId ? { user_id: userId } : {})
           };
           setPens((prev) => [...prev, newPen]);
@@ -1108,8 +1110,9 @@ export default function Home() {
         penId={currentPenId}
         penName={currentPen.name}
         initialCameraUrl={currentPen.camera_url}
-        onSave={async (cameraUrl) => {
-          await handleUpdatePenCamera(currentPenId, cameraUrl);
+        initialWebcamUrl={currentPen.webcam_url}
+        onSave={async (cameraUrl, webcamUrl) => {
+          await handleUpdatePenCameras(currentPenId, cameraUrl, webcamUrl);
         }}
       />
 

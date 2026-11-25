@@ -15,7 +15,8 @@ class PenBase(BaseModel):
     name: Optional[str] = Field(default="Chuồng Mới", description="Tên định danh chuồng")
     type: Optional[str] = Field(default="livestock", description="Phân loại: livestock, crops, greenhouse")
     user_id: Optional[str] = Field(default=None, description="UUID của chủ sở hữu chuồng")
-    camera_url: Optional[str] = Field(default=None, description="URL IP Webcam / RTSP stream của chuồng/vườn này")
+    camera_url: Optional[str] = Field(default=None, description="URL IP Webcam / RTSP stream của chuồng/vườn này (IP Cam điện thoại)")
+    webcam_url: Optional[str] = Field(default="0", description="Nguồn Webcam máy tính (ví dụ '0', '1', hoặc USB Cam)")
 
 
 class PenCreate(PenBase):
@@ -26,6 +27,7 @@ class PenUpdate(BaseModel):
     name: Optional[str] = Field(default=None, description="Tên định danh chuồng")
     type: Optional[str] = Field(default=None, description="Phân loại: livestock, crops, greenhouse")
     camera_url: Optional[str] = Field(default=None, description="URL IP Webcam / RTSP stream")
+    webcam_url: Optional[str] = Field(default=None, description="Nguồn Webcam máy tính")
 
 
 

@@ -10,10 +10,11 @@ Khởi chạy:
   uvicorn api_server:app --host 0.0.0.0 --port 8001
 """
 import time
+import asyncio
 import base64
 import cv2
 import numpy as np
-from fastapi import FastAPI, HTTPException, UploadFile, File, Form, Query
+from fastapi import FastAPI, HTTPException, UploadFile, File, Form, Query, WebSocket, WebSocketDisconnect
 from fastapi.responses import HTMLResponse, StreamingResponse, Response
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
@@ -79,21 +80,65 @@ async def get_viewer_page():
     return HTMLResponse(content=VIEWER_HTML, status_code=200)
 
 
-@app.get("/api/v1/camera/video_feed")
-async def get_camera_video_feed(overlay: bool = Query(True, description="Vẽ khung HUD phân tích AI")):
+@app.websocket("/ws/video_feed")
+@app.websocket("/api/v1/camera/ws")
+async def websocket_camera_feed(websocket: WebSocket, overlay: bool = True):
     """
-    Luồng video MJPEG thời gian thực (chuẩn multipart/x-mixed-replace).
-    Nhúng trực tiếp vào HTML bằng: <img src="/api/v1/camera/video_feed">
+    WebSocket Video Streaming cho Face & Uniform Engine:
+    - Loại bỏ Buffer Bloat qua Reverse Proxy.
+    - Truyền trực tiếp frame nhị phân với độ trễ thấp (Zero-Lag).
     """
+    await websocket.accept()
     if not camera_service.is_running:
-        started = camera_service.start(source=0)
-        if not started:
-            raise HTTPException(503, f"Không thể khởi động camera: {camera_service.error_message}")
+        camera_service.start(source=0)
 
-    return StreamingResponse(
-        camera_service.generate_mjpeg(overlay=overlay),
-        media_type="multipart/x-mixed-replace; boundary=frame"
-    )
+    max_in_flight = 2
+    credits = max_in_flight
+    ack_event = asyncio.Event()
+    ack_event.set()
+    client_uses_ack = False
+
+    async def recv_loop():
+        nonlocal client_uses_ack, credits
+        try:
+            while True:
+                msg = await websocket.receive_text()
+                if msg in ("ack", "next"):
+                    client_uses_ack = True
+                    credits = min(max_in_flight, credits + 1)
+                    ack_event.set()
+        except Exception:
+            pass
+
+    recv_task = asyncio.create_task(recv_loop())
+    last_sent_jpeg = None
+
+    try:
+        while not recv_task.done():
+            if client_uses_ack and credits <= 0:
+                ack_event.clear()
+                try:
+                    await asyncio.wait_for(ack_event.wait(), timeout=0.5)
+                except asyncio.TimeoutError:
+                    credits = 1
+
+            jpeg = camera_service.latest_jpeg if overlay else camera_service.latest_raw_jpeg
+            if jpeg and jpeg is not last_sent_jpeg:
+                if client_uses_ack:
+                    credits = max(0, credits - 1)
+                await websocket.send_bytes(jpeg)
+                last_sent_jpeg = jpeg
+                if not client_uses_ack:
+                    await asyncio.sleep(0.033)
+            else:
+                await asyncio.sleep(0.005)
+    except (WebSocketDisconnect, ConnectionResetError):
+        pass
+    except Exception as e:
+        print(f"⚠️ [WS FACE CAM ERROR]: {e}")
+    finally:
+        if not recv_task.done():
+            recv_task.cancel()
 
 
 @app.get("/api/v1/camera/status")

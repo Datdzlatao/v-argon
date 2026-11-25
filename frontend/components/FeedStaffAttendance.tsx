@@ -36,6 +36,7 @@ import { supabase } from '../lib/supabase';
 import { 
   BACKEND_URL,
   FACE_API_URL,
+  getFaceVideoStreamWsUrl,
   getStaffList, 
   getStaffAttendanceHistory, 
   checkInStaff, 
@@ -48,6 +49,7 @@ import {
   enrollStaffFace,
   reloadStaffFacesAPI
 } from '../lib/agent-api';
+import WebSocketStreamPlayer from './WebSocketStreamPlayer';
 
 interface FeedStaffAttendanceProps {
   currentPenId: string;
@@ -99,11 +101,8 @@ export default function FeedStaffAttendance({
   const [liveScanFps, setLiveScanFps] = useState<number>(0);
   const [liveLatencyMs, setLiveLatencyMs] = useState<number>(0);
 
-  // Hardware Stream URL State
+  // Hardware Stream Key State
   const [hardwareStreamKey, setHardwareStreamKey] = useState<number>(Date.now());
-  const [hardwareStreamUrl, setHardwareStreamUrl] = useState<string>(
-    `${FACE_API_URL}/api/v1/camera/video_feed?overlay=true`
-  );
 
   // Live Detection Results
   const [liveFaces, setLiveFaces] = useState<any[]>([]);
@@ -226,7 +225,6 @@ export default function FeedStaffAttendance({
 
       const newKey = Date.now();
       setHardwareStreamKey(newKey);
-      setHardwareStreamUrl(`${FACE_API_URL}/api/v1/camera/video_feed?overlay=true&t=${newKey}`);
 
       try {
         await startCameraDeviceAPI('0', FIXED_UNIFORM_RULE);
@@ -900,20 +898,14 @@ export default function FeedStaffAttendance({
         {/* CAMERA VIEWPORT (8 cols) */}
         <div className="lg:col-span-7 xl:col-span-8 space-y-3">
           <div className="relative rounded-2xl overflow-hidden bg-slate-950 aspect-video max-h-[440px] flex items-center justify-center border border-slate-800 shadow-inner group">
-            {/* Server Hardware MJPEG Video Stream */}
+            {/* Server Hardware WebSocket Video Stream */}
             {isCameraActive && (
-              <img
+              <WebSocketStreamPlayer
                 key={hardwareStreamKey}
-                src={hardwareStreamUrl}
-                alt="Luồng máy ảnh chuồng trại"
-                className="w-full h-full object-contain"
-                onError={() => {
-                  setHardwareStreamUrl((prev) =>
-                    prev.includes(FACE_API_URL)
-                      ? `${BACKEND_URL}/api/camera/video_feed?overlay=true&t=${Date.now()}`
-                      : `${FACE_API_URL}/api/v1/camera/video_feed?overlay=true&t=${Date.now()}`
-                  );
-                }}
+                wsUrl={`${getFaceVideoStreamWsUrl(true)}&t=${hardwareStreamKey}`}
+                altText="Luồng máy ảnh chuồng trại"
+                isActive={isCameraActive}
+                showOverlayBadges={false}
               />
             )}
 

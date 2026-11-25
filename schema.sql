@@ -14,11 +14,13 @@ CREATE TABLE IF NOT EXISTS public.pens (
     user_id UUID DEFAULT auth.uid(),
     type TEXT DEFAULT 'livestock',
     camera_url TEXT,
+    webcam_url TEXT DEFAULT '0',
     created_at TIMESTAMPTZ DEFAULT now()
 );
 
--- Hỗ trợ nâng cấp cột camera_url nếu bảng pens đã tồn tại từ trước
+-- Hỗ trợ nâng cấp cột camera_url và webcam_url nếu bảng pens đã tồn tại từ trước
 ALTER TABLE IF EXISTS public.pens ADD COLUMN IF NOT EXISTS camera_url TEXT;
+ALTER TABLE IF EXISTS public.pens ADD COLUMN IF NOT EXISTS webcam_url TEXT DEFAULT '0';
 
 CREATE TABLE IF NOT EXISTS public.env_logs (
     id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,

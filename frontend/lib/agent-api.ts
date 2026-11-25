@@ -6,12 +6,44 @@ const DEFAULT_ACTION_API_URL = 'https://dat-latitude-5590-2.tail2bda46.ts.net';
 
 export const BACKEND_URL = (process.env.NEXT_PUBLIC_API_URL || DEFAULT_BACKEND_URL).replace(/\/+$/, '');
 export const FACE_API_URL = (process.env.NEXT_PUBLIC_FACE_API_URL || DEFAULT_FACE_API_URL).replace(/\/+$/, '');
+export const FACE_WS_URL = process.env.NEXT_PUBLIC_FACE_WS_URL || (
+  FACE_API_URL.startsWith('https://')
+    ? FACE_API_URL.replace(/^https:\/\//i, 'wss://')
+    : FACE_API_URL.replace(/^http:\/\//i, 'ws://')
+);
 export const ACTION_API_URL = (process.env.NEXT_PUBLIC_ACTION_API_URL || DEFAULT_ACTION_API_URL).replace(/\/+$/, '');
+export const ACTION_WS_URL = process.env.NEXT_PUBLIC_ACTION_WS_URL || (
+  ACTION_API_URL.startsWith('https://')
+    ? ACTION_API_URL.replace(/^https:\/\//i, 'wss://')
+    : ACTION_API_URL.replace(/^http:\/\//i, 'ws://')
+);
 export const WS_URL = process.env.NEXT_PUBLIC_WS_URL || (
   BACKEND_URL.startsWith('https://')
     ? BACKEND_URL.replace(/^https:\/\//i, 'wss://') + '/ws'
     : BACKEND_URL.replace(/^http:\/\//i, 'ws://') + '/ws'
 );
+
+export function getActionVideoStreamWsUrl(
+  targetId: string = 'DEFAULT',
+  streamType: string = 'ipcam',
+  source?: string
+): string {
+  const params = new URLSearchParams({
+    target_id: targetId || 'DEFAULT',
+    stream_type: streamType,
+  });
+  if (source && source.trim()) {
+    params.set('source', source.trim());
+  }
+  return `${ACTION_WS_URL}/ws/video_feed?${params.toString()}`;
+}
+
+export function getFaceVideoStreamWsUrl(overlay: boolean = true): string {
+  const params = new URLSearchParams({
+    overlay: overlay ? 'true' : 'false',
+  });
+  return `${FACE_WS_URL}/api/v1/camera/ws?${params.toString()}`;
+}
 
 export interface ChatResponse {
   reply: string;
@@ -832,12 +864,18 @@ export async function stopCameraDeviceAPI(): Promise<any> {
 // 10. ACTION & MOTION TRACKING API (PORT 8002 - IP WEB CAM PER PEN)
 // ==============================================================================
 
-export async function getActionTrackerStatusAPI(targetId: string = 'DEFAULT'): Promise<any> {
+export async function getActionTrackerStatusAPI(
+  targetId: string = 'DEFAULT',
+  streamType: string = 'ipcam'
+): Promise<any> {
   try {
-    const res = await fetch(`${ACTION_API_URL}/api/tracker/status?target_id=${encodeURIComponent(targetId)}`, {
-      cache: 'no-store',
-      signal: AbortSignal.timeout(1200)
-    });
+    const res = await fetch(
+      `${ACTION_API_URL}/api/tracker/status?target_id=${encodeURIComponent(targetId)}&stream_type=${encodeURIComponent(streamType)}`,
+      {
+        cache: 'no-store',
+        signal: AbortSignal.timeout(1200)
+      }
+    );
     if (res.ok) return await res.json();
   } catch {}
   return null;
@@ -854,25 +892,29 @@ export async function getActionLogsAPI(targetId?: string, limit: number = 20): P
   return { count: 0, data: [] };
 }
 
-export async function configurePenCameraAPI(targetId: string, source: string): Promise<any> {
+export async function configurePenCameraAPI(
+  targetId: string,
+  source: string,
+  streamType: string = 'ipcam'
+): Promise<any> {
   const res = await fetch(`${ACTION_API_URL}/api/camera/configure`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ target_id: targetId, source }),
+    body: JSON.stringify({ target_id: targetId, source, stream_type: streamType }),
   });
   if (!res.ok) {
     const err = await res.json().catch(() => ({}));
-    throw new Error(err.detail || 'Lỗi khi kết nối IP Camera');
+    throw new Error(err.detail || 'Lỗi khi cấu hình camera');
   }
   return await res.json();
 }
 
-export async function stopPenCameraAPI(targetId: string): Promise<any> {
+export async function stopPenCameraAPI(targetId: string, streamType: string = 'all'): Promise<any> {
   try {
     const res = await fetch(`${ACTION_API_URL}/api/camera/stop`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ target_id: targetId }),
+      body: JSON.stringify({ target_id: targetId, stream_type: streamType }),
     });
     if (res.ok) return await res.json();
   } catch {}
@@ -881,7 +923,7 @@ export async function stopPenCameraAPI(targetId: string): Promise<any> {
 
 export async function updatePenMetadataAPI(
   penId: string,
-  updates: { name?: string; type?: string; camera_url?: string }
+  updates: { name?: string; type?: string; camera_url?: string; webcam_url?: string }
 ): Promise<any> {
   const res = await fetch(`${BACKEND_URL}/api/pens/${encodeURIComponent(penId)}`, {
     method: 'PATCH',

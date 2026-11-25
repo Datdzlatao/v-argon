@@ -135,8 +135,8 @@ class CameraStreamService:
             # Vẽ HUD nhận diện lên khung hình
             annotated = self.pipeline.draw_hud(frame, res)
 
-            # Mã hóa JPEG chất lượng 75 tối ưu độ mượt và giảm độ trễ mạng
-            _, hud_jpg = cv2.imencode(".jpg", annotated, [cv2.IMWRITE_JPEG_QUALITY, 75])
+            # Mã hóa JPEG chất lượng 55 tối ưu băng thông internet và giảm triệt để độ trễ
+            _, hud_jpg = cv2.imencode(".jpg", annotated, [cv2.IMWRITE_JPEG_QUALITY, 55])
 
             with self.lock:
                 self.latest_jpeg = hud_jpg.tobytes()
@@ -224,12 +224,14 @@ class CameraStreamService:
             return self.latest_jpeg
 
     def generate_mjpeg(self, overlay: bool = True) -> Generator[bytes, None, None]:
-        """Tạo luồng multipart/x-mixed-replace cho thẻ <img> hoặc trình duyệt."""
+        """Tạo luồng multipart/x-mixed-replace cho thẻ <img> hoặc trình duyệt kèm Content-Length."""
         while self.is_running:
             with self.lock:
                 frame_bytes = self.latest_jpeg if overlay else self.latest_raw_jpeg
 
             if frame_bytes is not None:
                 yield (b"--frame\r\n"
-                       b"Content-Type: image/jpeg\r\n\r\n" + frame_bytes + b"\r\n")
-            time.sleep(0.033)  # Giới hạn ~30 FPS trên client
+                       b"Content-Type: image/jpeg\r\n"
+                       b"Content-Length: " + str(len(frame_bytes)).encode("ascii") + b"\r\n\r\n"
+                       + frame_bytes + b"\r\n")
+            time.sleep(0.042)  # Giới hạn ~24 FPS mượt mà cho truyền Internet không bị nghẽn buffer

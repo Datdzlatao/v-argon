@@ -15,32 +15,44 @@ import {
   Eye,
   CheckCircle2,
   ExternalLink,
+  Smartphone,
+  Laptop,
+  Columns,
 } from 'lucide-react';
 import {
   ACTION_API_URL,
+  getActionVideoStreamWsUrl,
   getActionTrackerStatusAPI,
   getActionLogsAPI,
   stopPenCameraAPI,
 } from '../lib/agent-api';
+import WebSocketStreamPlayer from './WebSocketStreamPlayer';
 
 interface FeedPenCameraProps {
   currentPenId: string;
   penName: string;
   penCameraUrl?: string;
+  penWebcamUrl?: string;
   currentMode: 'livestock' | 'cultivation';
   onOpenConfigCamera: () => void;
   onNotification?: (title: string, desc: string) => void;
 }
 
+type StreamMode = 'ipcam' | 'webcam' | 'dual';
+
 export default function FeedPenCamera({
   currentPenId,
   penName,
   penCameraUrl,
+  penWebcamUrl = '0',
   currentMode,
   onOpenConfigCamera,
   onNotification,
 }: FeedPenCameraProps) {
   const isLivestock = currentMode === 'livestock';
+
+  // Chế độ luồng xem: IP Cam điện thoại / Webcam máy tính / Cả 2 luồng song song
+  const [streamMode, setStreamMode] = useState<StreamMode>('ipcam');
 
   // Camera Stream Active State
   const [isCameraActive, setIsCameraActive] = useState<boolean>(false);
@@ -55,20 +67,20 @@ export default function FeedPenCamera({
   const pollIntervalRef = useRef<any>(null);
   const lastActionRef = useRef<string>('');
 
-  // Luồng camera MJPEG riêng cho từng chuồng
-  const videoFeedUrl = `${ACTION_API_URL}/video_feed?target_id=${encodeURIComponent(
-    currentPenId
-  )}&source=${encodeURIComponent(penCameraUrl || '')}&t=${streamKey}`;
+  // 1. Luồng IP Camera điện thoại / RTSP
+  const videoFeedIpWsUrl = getActionVideoStreamWsUrl(currentPenId, 'ipcam', penCameraUrl);
 
-  // Khi người dùng chuyển sang chuồng khác -> cập nhật stream key và reset telemetry
+  // 2. Luồng Webcam máy tính / USB
+  const videoFeedWebcamWsUrl = getActionVideoStreamWsUrl(currentPenId, 'webcam', penWebcamUrl);
+
+  // Khi người dùng chuyển sang chuồng khác hoặc đổi cấu hình -> cập nhật stream key và reset telemetry
   useEffect(() => {
     setStreamKey(Date.now());
     loadActionLogs();
     if (isCameraActive) {
-      // Khi đổi chuồng mà camera đang bật -> làm mới stream cho chuồng mới
       pollStatus();
     }
-  }, [currentPenId, penCameraUrl]);
+  }, [currentPenId, penCameraUrl, penWebcamUrl, streamMode]);
 
   // Polling Telemetry Loop khi camera đang bật
   useEffect(() => {
@@ -84,10 +96,11 @@ export default function FeedPenCamera({
     return () => {
       if (pollIntervalRef.current) clearInterval(pollIntervalRef.current);
     };
-  }, [isCameraActive, currentPenId]);
+  }, [isCameraActive, currentPenId, streamMode]);
 
   const pollStatus = async () => {
-    const data = await getActionTrackerStatusAPI(currentPenId);
+    const activeType = streamMode === 'dual' ? 'ipcam' : streamMode;
+    const data = await getActionTrackerStatusAPI(currentPenId, activeType);
     if (data) {
       setTelemetry(data);
 
@@ -95,7 +108,7 @@ export default function FeedPenCamera({
       if (
         data.last_action &&
         data.last_action !== 'None' &&
-        data.last_action !== 'Chưa kết nối camera' &&
+        !data.last_action.includes('Chưa kết nối') &&
         data.last_action !== 'AI Analyzing...' &&
         data.last_action !== lastActionRef.current
       ) {
@@ -126,7 +139,7 @@ export default function FeedPenCamera({
       const res = await getActionLogsAPI(currentPenId, 5);
       setActionLogs(res.data || []);
     } catch (e) {
-      // console.error("Error loading action logs:", e);
+      // ignore
     } finally {
       setIsRefreshingLogs(false);
     }
@@ -135,7 +148,7 @@ export default function FeedPenCamera({
   const toggleCamera = () => {
     if (isCameraActive) {
       setIsCameraActive(false);
-      stopPenCameraAPI(currentPenId).catch(() => {});
+      stopPenCameraAPI(currentPenId, 'all').catch(() => {});
     } else {
       setIsConnecting(true);
       setStreamKey(Date.now());
@@ -172,11 +185,17 @@ export default function FeedPenCamera({
                 {penName}
               </span>
             </h4>
-            <p className="text-xs text-fb-muted mt-0.5 flex items-center gap-2 flex-wrap">
-              <span>IP Cam: <strong className="font-mono text-fb-text">{penCameraUrl || 'Chưa cấu hình (Mặc định)'}</strong></span>
+            <div className="text-xs text-fb-muted mt-0.5 flex items-center gap-2 flex-wrap">
+              <span className="flex items-center gap-1">
+                <Smartphone className="w-3.5 h-3.5 text-blue-600" />
+                <span>IP Cam: <strong className="font-mono text-fb-text">{penCameraUrl || 'Chưa cấu hình (Port 8080)'}</strong></span>
+              </span>
               <span>•</span>
-              <span className="text-emerald-700 font-medium">Tự động nhận diện {isLivestock ? 'cho ăn & bảo hộ' : 'tưới nước & bón phân'}</span>
-            </p>
+              <span className="flex items-center gap-1">
+                <Laptop className="w-3.5 h-3.5 text-purple-600" />
+                <span>Webcam: <strong className="font-mono text-fb-text">{penWebcamUrl || '0 (Mặc định)'}</strong></span>
+              </span>
+            </div>
           </div>
         </div>
 
@@ -185,10 +204,10 @@ export default function FeedPenCamera({
           <button
             onClick={onOpenConfigCamera}
             className="px-3 py-1.5 rounded-xl border border-fb-divider bg-fb-bg hover:bg-fb-hover text-xs font-semibold text-fb-text flex items-center gap-1.5 transition cursor-pointer"
-            title="Đổi địa chỉ IP Camera cho khu vực này"
+            title="Cấu hình cả 2 luồng: IP Cam điện thoại & Webcam máy tính"
           >
             <Settings className="w-3.5 h-3.5 text-fb-muted" />
-            <span>Cấu Hình IP Cam</span>
+            <span>Cấu Hình 2 Luồng Cam</span>
           </button>
 
           <button
@@ -214,38 +233,91 @@ export default function FeedPenCamera({
         </div>
       </div>
 
-      {/* 2. Main Viewport & Live Stats */}
-      <div className="mt-3.5 grid grid-cols-1 lg:grid-cols-12 gap-3.5">
+      {/* 2. Stream Switcher Tabs: IP Cam (Điện thoại) | Webcam (Máy tính) | Xem cả 2 luồng */}
+      <div className="mt-3 flex items-center justify-between flex-wrap gap-2">
+        <div className="inline-flex p-1 bg-fb-bg rounded-xl border border-fb-divider text-xs font-semibold">
+          <button
+            onClick={() => setStreamMode('ipcam')}
+            className={`px-3 py-1.5 rounded-lg flex items-center gap-1.5 transition ${
+              streamMode === 'ipcam'
+                ? 'bg-white text-emerald-700 shadow-sm font-bold border border-emerald-200'
+                : 'text-fb-muted hover:text-fb-text'
+            }`}
+          >
+            <Smartphone className="w-3.5 h-3.5 text-blue-600" />
+            <span>📱 IP Cam Điện Thoại</span>
+          </button>
+
+          <button
+            onClick={() => setStreamMode('webcam')}
+            className={`px-3 py-1.5 rounded-lg flex items-center gap-1.5 transition ${
+              streamMode === 'webcam'
+                ? 'bg-white text-emerald-700 shadow-sm font-bold border border-emerald-200'
+                : 'text-fb-muted hover:text-fb-text'
+            }`}
+          >
+            <Laptop className="w-3.5 h-3.5 text-purple-600" />
+            <span>💻 Webcam Máy Tính</span>
+          </button>
+
+          <button
+            onClick={() => setStreamMode('dual')}
+            className={`px-3 py-1.5 rounded-lg flex items-center gap-1.5 transition ${
+              streamMode === 'dual'
+                ? 'bg-white text-emerald-700 shadow-sm font-bold border border-emerald-200'
+                : 'text-fb-muted hover:text-fb-text'
+            }`}
+          >
+            <Columns className="w-3.5 h-3.5 text-emerald-600" />
+            <span>👥 Xem Cả 2 Luồng (Song Song)</span>
+          </button>
+        </div>
+
+        <div className="text-[11px] text-fb-muted flex items-center gap-2">
+          <span className="w-2 h-2 rounded-full bg-emerald-500 animate-ping"></span>
+          <span>Tự động đồng bộ với App Android</span>
+        </div>
+      </div>
+
+      {/* 3. Main Viewport & Live Stats */}
+      <div className="mt-3 grid grid-cols-1 lg:grid-cols-12 gap-3.5">
         {/* Left: Video Viewport */}
-        <div className="lg:col-span-8 bg-slate-950 rounded-2xl overflow-hidden border border-slate-800 relative flex items-center justify-center aspect-video shadow-inner">
+        <div className="lg:col-span-8 bg-slate-950 rounded-2xl overflow-hidden border border-slate-800 relative flex items-center justify-center min-h-[280px] shadow-inner">
           {isCameraActive ? (
-            <div className="relative w-full h-full">
-              <img
-                src={videoFeedUrl}
-                alt={`Live Cam ${penName}`}
-                className="w-full h-full object-contain"
-                onError={() => {
-                  // Fallback khi camera IP chưa mở
-                }}
-              />
-
-              {/* Status Pill on top of stream */}
-              <div className="absolute top-2.5 left-2.5 flex items-center gap-2 bg-slate-900/80 backdrop-blur px-2.5 py-1 rounded-lg border border-slate-700/70 text-[11px] text-white">
-                <span className="w-2 h-2 rounded-full bg-emerald-500 animate-ping"></span>
-                <span className="font-semibold">{penName}</span>
-                <span className="text-slate-400 font-mono text-[10px]">
-                  {fsmState !== 'IDLE' ? `[FSM: ${fsmState}]` : 'LIVE'}
-                </span>
+            streamMode === 'dual' ? (
+              // DUAL STREAM SPLIT VIEW (Xem cả 2 luồng song song qua WebSocket)
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-2 w-full h-full p-2">
+                <WebSocketStreamPlayer
+                  wsUrl={videoFeedIpWsUrl}
+                  altText={`IP Cam ${penName}`}
+                  isActive={isCameraActive}
+                  label="📱 IP Cam Điện Thoại"
+                  badgeColor="bg-blue-500"
+                />
+                <WebSocketStreamPlayer
+                  wsUrl={videoFeedWebcamWsUrl}
+                  altText={`Webcam ${penName}`}
+                  isActive={isCameraActive}
+                  label="💻 Webcam Máy Tính"
+                  badgeColor="bg-purple-500"
+                />
               </div>
-
-              {/* Cooldown Pill on top right */}
-              {telemetry && telemetry.cooldown_remaining > 0 && (
-                <div className="absolute top-2.5 right-2.5 flex items-center gap-1 bg-amber-950/80 backdrop-blur px-2 py-0.5 rounded-lg border border-amber-600/60 text-[10px] text-amber-300 font-mono">
-                  <Clock className="w-3 h-3" />
-                  <span>Cooldown: {telemetry.cooldown_remaining}s</span>
-                </div>
-              )}
-            </div>
+            ) : (
+              // SINGLE STREAM VIEW (IP Cam hoặc Webcam Máy tính qua WebSocket Zero-Lag)
+              <WebSocketStreamPlayer
+                wsUrl={streamMode === 'webcam' ? videoFeedWebcamWsUrl : videoFeedIpWsUrl}
+                altText={`Live Cam ${penName}`}
+                isActive={isCameraActive}
+                label={penName}
+                subLabel={streamMode === 'webcam' ? '💻 Webcam Máy Tính' : '📱 IP Cam Điện Thoại'}
+                cooldownText={
+                  telemetry && telemetry.cooldown_remaining > 0
+                    ? `Cooldown: ${telemetry.cooldown_remaining}s`
+                    : undefined
+                }
+                badgeColor={streamMode === 'webcam' ? 'bg-purple-500' : 'bg-blue-500'}
+              />
+            )
           ) : (
             <div className="p-6 text-center text-slate-400 flex flex-col items-center">
               <div className="w-14 h-14 rounded-2xl bg-slate-900 border border-slate-800 flex items-center justify-center text-slate-500 mb-2.5 shadow">
@@ -253,14 +325,14 @@ export default function FeedPenCamera({
               </div>
               <p className="text-sm font-bold text-slate-300">Camera Chuồng {penName} Đang Tắt</p>
               <p className="text-xs text-slate-500 max-w-sm mt-1">
-                Bật camera để AI tự động nhận diện tư thế người làm nông, phát hiện hành vi chăm sóc và đối chiếu tự động.
+                Hỗ trợ 2 luồng độc lập: IP Camera điện thoại (RTSP/8080) và Webcam máy tính (USB/0). AI tự động phân tích hành vi và tư thế làm việc.
               </p>
               <button
                 onClick={toggleCamera}
                 className="mt-3.5 px-4 py-2 bg-emerald-700 hover:bg-emerald-600 text-white text-xs font-bold rounded-xl transition flex items-center gap-1.5 shadow"
               >
                 <Camera className="w-3.5 h-3.5" />
-                <span>Bật Camera Khu Vực Này</span>
+                <span>Bật Camera ({streamMode === 'ipcam' ? '📱 IP Cam' : streamMode === 'webcam' ? '💻 Webcam' : '👥 Cả 2 Luồng'})</span>
               </button>
             </div>
           )}
@@ -350,14 +422,14 @@ export default function FeedPenCamera({
                 </span>
               </div>
               <p className="text-[11px] text-emerald-800 italic line-clamp-1">
-                {telemetry?.last_action_reason || 'Đang theo dõi luồng IP camera...'}
+                {telemetry?.last_action_reason || 'Đang theo dõi 2 luồng camera chuồng trại...'}
               </p>
             </div>
           </div>
 
           {/* Microservice Port Info */}
           <div className="text-[11px] text-fb-muted bg-fb-bg px-3 py-2 rounded-xl border border-fb-divider flex items-center justify-between">
-            <span>⚡ API Độc Lập: <strong className="font-mono text-fb-text">Port 8002</strong></span>
+            <span>⚡ AI Vision Engine: <strong className="font-mono text-fb-text">Port 8002</strong></span>
             <a
               href={`${ACTION_API_URL}`}
               target="_blank"
@@ -371,7 +443,7 @@ export default function FeedPenCamera({
         </div>
       </div>
 
-      {/* 3. Recent Action Logs for THIS Pen */}
+      {/* 4. Recent Action Logs for THIS Pen */}
       <div className="mt-3.5 pt-3 border-t border-fb-divider">
         <div className="flex items-center justify-between mb-2">
           <h5 className="text-xs font-bold text-fb-text flex items-center gap-1.5">
@@ -397,7 +469,6 @@ export default function FeedPenCamera({
                   : log.action_type === 'WATERING'
                   ? 'Tưới Nước'
                   : 'Bón Phân';
-              const isSuccess = log.status === 'SUCCESS';
               return (
                 <div
                   key={log.id || idx}
