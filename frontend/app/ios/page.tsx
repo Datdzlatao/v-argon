@@ -9,7 +9,6 @@ import {
   Thermometer,
   Droplets,
   Wind,
-  Sun,
   Fan,
   CloudRain,
   Flame,
@@ -21,22 +20,32 @@ import {
   Power,
   CheckCircle2,
   AlertTriangle,
+  Package,
+  Calendar,
+  Bell,
+  Users,
 } from 'lucide-react';
 import './ios.css';
 import WebSocketStreamPlayer from '../../components/WebSocketStreamPlayer';
 import {
   BACKEND_URL,
-  WS_URL,
+  connectAgentWebSocket,
   getActionVideoStreamWsUrl,
   getFaceVideoStreamWsUrl,
   getActionTrackerStatusAPI,
   getActionLogsAPI,
   stopPenCameraAPI,
+  configurePenCameraAPI,
   startCameraDeviceAPI,
   stopCameraDeviceAPI,
   getCameraLatestTelemetryAPI,
+  getStaffList,
+  getStaffAttendanceHistory,
+  checkInStaff,
   controlDeviceViaAPI,
   sendAgentChat,
+  getChatHistory,
+  triggerDailyBriefing,
 } from '../../lib/agent-api';
 
 type TabKey = 'home' | 'camera' | 'attendance' | 'chat';
@@ -72,19 +81,30 @@ export default function IosPwaPage() {
   const [pens, setPens] = useState<PenItem[]>([]);
   const [currentPenId, setCurrentPenId] = useState<string>('');
   const [env, setEnv] = useState<any>({});
-  const [devices, setDevices] = useState<Record<string, boolean>>({});
+  const [devices, setDevices] = useState<any[]>([]);
+  const [alerts, setAlerts] = useState<any[]>([]);
+  const [inventory, setInventory] = useState<any[]>([]);
+  const [schedules, setSchedules] = useState<any[]>([]);
+  const [animalsCount, setAnimalsCount] = useState<number>(0);
+  const [cropsCount, setCropsCount] = useState<number>(0);
   const [wsConnected, setWsConnected] = useState(false);
   const [isStandalone, setIsStandalone] = useState(true);
+  const [isLoading, setIsLoading] = useState(false);
+  const [toast, setToast] = useState<string | null>(null);
 
   // Camera AI state
   const [isActionCamOn, setIsActionCamOn] = useState(false);
   const [streamMode, setStreamMode] = useState<'ipcam' | 'webcam' | 'dual'>('ipcam');
   const [telemetry, setTelemetry] = useState<any>(null);
   const [actionLogs, setActionLogs] = useState<any[]>([]);
+  const [ipCamInput, setIpCamInput] = useState('');
 
   // Face & Uniform state
   const [isFaceCamOn, setIsFaceCamOn] = useState(false);
   const [faceTelemetry, setFaceTelemetry] = useState<any>(null);
+  const [staffList, setStaffList] = useState<any[]>([]);
+  const [attendanceHistory, setAttendanceHistory] = useState<any[]>([]);
+  const [selectedStaffId, setSelectedStaffId] = useState<string>('');
 
   // Chat state
   const [chatInput, setChatInput] = useState('');
@@ -96,6 +116,11 @@ export default function IosPwaPage() {
 
   const currentPen = pens.find((p) => p.id === currentPenId) || pens[0];
 
+  const showToast = (msg: string) => {
+    setToast(msg);
+    setTimeout(() => setToast((curr) => (curr === msg ? null : curr)), 3000);
+  };
+
   useEffect(() => {
     const standalone =
       window.matchMedia('(display-mode: standalone)').matches ||
@@ -103,83 +128,107 @@ export default function IosPwaPage() {
     setIsStandalone(standalone);
   }, []);
 
-  const loadDashboard = async (penId?: string) => {
+  // Load initial Pens + Farm Data from real FastAPI endpoints
+  const loadFarmData = async (penIdOverride?: string) => {
+    setIsLoading(true);
     try {
-      const url = penId
-        ? `${BACKEND_URL}/api/dashboard?pen_id=${encodeURIComponent(penId)}`
-        : `${BACKEND_URL}/api/dashboard`;
-      const res = await fetch(url);
-      if (!res.ok) return;
-      const data = await res.json();
-      if (data?.pens?.length) {
-        setPens(data.pens);
-        if (!currentPenId) setCurrentPenId(data.pens[0].id);
-      }
-      if (data?.environment) setEnv(data.environment);
-      if (data?.devices) {
-        const map: Record<string, boolean> = {};
-        if (Array.isArray(data.devices)) {
-          data.devices.forEach((d: any) => {
-            map[d.device_type || d.type] = Boolean(d.status ?? d.state);
-          });
-        } else {
-          Object.assign(map, data.devices);
+      const pensRes = await fetch(`${BACKEND_URL}/api/pens`);
+      let activePenId = penIdOverride || currentPenId;
+      if (pensRes.ok) {
+        const pensData = await pensRes.json();
+        const list = Array.isArray(pensData) ? pensData : pensData?.pens || [];
+        setPens(list);
+        if (!activePenId && list.length > 0) {
+          activePenId = list[0].id;
+          setCurrentPenId(list[0].id);
         }
-        setDevices(map);
       }
-    } catch {}
+
+      const penQuery = activePenId ? `pen_id=${encodeURIComponent(activePenId)}` : '';
+
+      const [envRes, devRes, alertRes, invRes, schedRes, animRes, cropRes, staff, attLogs] = await Promise.all([
+        fetch(`${BACKEND_URL}/api/env/latest?limit=1${penQuery ? `&${penQuery}` : ''}`).then((r) => (r.ok ? r.json() : [])).catch(() => []),
+        fetch(`${BACKEND_URL}/api/devices${penQuery ? `?${penQuery}` : ''}`).then((r) => (r.ok ? r.json() : [])).catch(() => []),
+        fetch(`${BACKEND_URL}/api/alerts?limit=5`).then((r) => (r.ok ? r.json() : [])).catch(() => []),
+        fetch(`${BACKEND_URL}/api/inventory`).then((r) => (r.ok ? r.json() : [])).catch(() => []),
+        fetch(`${BACKEND_URL}/api/schedules`).then((r) => (r.ok ? r.json() : [])).catch(() => []),
+        fetch(`${BACKEND_URL}/api/animals${penQuery ? `?${penQuery}` : ''}`).then((r) => (r.ok ? r.json() : [])).catch(() => []),
+        fetch(`${BACKEND_URL}/api/crops${penQuery ? `?${penQuery}` : ''}`).then((r) => (r.ok ? r.json() : [])).catch(() => []),
+        getStaffList().catch(() => []),
+        getStaffAttendanceHistory(10).catch(() => []),
+      ]);
+
+      if (Array.isArray(envRes) && envRes.length > 0) setEnv(envRes[0]);
+      if (Array.isArray(devRes)) setDevices(devRes);
+      if (Array.isArray(alertRes)) setAlerts(alertRes);
+      if (Array.isArray(invRes)) setInventory(invRes);
+      if (Array.isArray(schedRes)) setSchedules(schedRes);
+      if (Array.isArray(animRes)) setAnimalsCount(animRes.length);
+      if (Array.isArray(cropRes)) setCropsCount(cropRes.length);
+      setStaffList(staff);
+      if (staff.length > 0 && !selectedStaffId) setSelectedStaffId(staff[0].id);
+      setAttendanceHistory(attLogs);
+
+      if (activePenId) {
+        const hist = await getChatHistory('ios_pwa_user', activePenId);
+        if (hist.length > 0) {
+          setMessages(hist.map((m) => ({ sender: m.sender, text: m.content })));
+        }
+      }
+    } catch {
+      showToast('Không kết nối được tới máy chủ Backend');
+    } finally {
+      setIsLoading(false);
+    }
   };
 
   useEffect(() => {
-    loadDashboard(currentPenId || undefined);
-  }, [currentPenId]);
-
-  useEffect(() => {
-    let ws: WebSocket | null = null;
-    let timer: ReturnType<typeof setTimeout> | null = null;
-    let closed = false;
-
-    const connect = () => {
-      if (closed) return;
-      try {
-        ws = new WebSocket(WS_URL);
-        ws.onopen = () => setWsConnected(true);
-        ws.onmessage = (e) => {
-          try {
-            const pkt = JSON.parse(e.data);
-            if (pkt.event === 'environment_update' && pkt.data) {
-              setEnv(pkt.data);
-            } else if (pkt.event === 'device_update' && pkt.data) {
-              setDevices((prev) => ({
-                ...prev,
-                [pkt.data.device_type]: Boolean(pkt.data.status),
-              }));
-            }
-          } catch {}
-        };
-        ws.onclose = () => {
-          setWsConnected(false);
-          if (!closed) timer = setTimeout(connect, 2500);
-        };
-        ws.onerror = () => ws?.close();
-      } catch {}
-    };
-
-    connect();
-    return () => {
-      closed = true;
-      if (timer) clearTimeout(timer);
-      ws?.close();
-    };
+    loadFarmData();
   }, []);
 
+  useEffect(() => {
+    if (currentPenId) {
+      loadFarmData(currentPenId);
+      const p = pens.find((x) => x.id === currentPenId);
+      setIpCamInput(p?.camera_url || '');
+    }
+  }, [currentPenId]);
+
+  // Realtime Farm WebSocket (/ws)
+  useEffect(() => {
+    const disconnect = connectAgentWebSocket(
+      (event, data) => {
+        if (event === 'env_update' && data) {
+          setEnv(data);
+        } else if (event === 'device_update' && data) {
+          setDevices((prev) =>
+            prev.map((d) =>
+              d.id === data.id || d.name === data.name
+                ? { ...d, is_active: data.is_active ?? data.status, status: data.status ?? data.is_active }
+                : d
+            )
+          );
+        } else if (event === 'alert' && data) {
+          setAlerts((prev) => [data, ...prev].slice(0, 5));
+          showToast(`⚠️ Cảnh báo: ${data.message || data.alert_type}`);
+        } else if (event === 'staff_checkin' && data) {
+          setAttendanceHistory((prev) => [data, ...prev].slice(0, 10));
+          showToast(`✅ Điểm danh: ${data.staff_name || data.staff_id}`);
+        }
+      },
+      (status) => setWsConnected(status === 'connected')
+    );
+    return disconnect;
+  }, []);
+
+  // Poll Action Telemetry when Camera tab is active
   useEffect(() => {
     if (!isActionCamOn || !currentPenId) return;
     const poll = async () => {
       const type = streamMode === 'dual' ? 'ipcam' : streamMode;
       const [st, logsRes] = await Promise.all([
         getActionTrackerStatusAPI(currentPenId, type),
-        getActionLogsAPI(currentPenId, 5),
+        getActionLogsAPI(currentPenId, 8),
       ]);
       if (st) setTelemetry(st);
       setActionLogs(logsRes?.data || []);
@@ -189,6 +238,7 @@ export default function IosPwaPage() {
     return () => clearInterval(id);
   }, [isActionCamOn, currentPenId, streamMode]);
 
+  // Poll Face & Uniform Telemetry when Face Cam is active
   useEffect(() => {
     if (!isFaceCamOn) return;
     const poll = async () => {
@@ -200,13 +250,24 @@ export default function IosPwaPage() {
     return () => clearInterval(id);
   }, [isFaceCamOn]);
 
-  const handleToggleDevice = async (type: string) => {
-    const next = !devices[type];
-    setDevices((prev) => ({ ...prev, [type]: next }));
+  const handleToggleDevice = async (device: any) => {
+    const isOn = Boolean(device.is_active ?? device.status);
+    const next = !isOn;
+    setDevices((prev) =>
+      prev.map((d) => (d.id === device.id ? { ...d, is_active: next, status: next } : d))
+    );
     try {
-      await controlDeviceViaAPI(currentPenId || 'DEFAULT', type, next ? 'turn_on' : 'turn_off');
+      await controlDeviceViaAPI(
+        currentPenId || device.pen_id || 'DEFAULT',
+        device.name || device.device_type,
+        next ? 'turn_on' : 'turn_off'
+      );
+      showToast(`${device.name}: ${next ? 'ĐÃ BẬT' : 'ĐÃ TẮT'}`);
     } catch {
-      setDevices((prev) => ({ ...prev, [type]: !next }));
+      setDevices((prev) =>
+        prev.map((d) => (d.id === device.id ? { ...d, is_active: isOn, status: isOn } : d))
+      );
+      showToast('Lỗi điều khiển thiết bị');
     }
   };
 
@@ -219,6 +280,19 @@ export default function IosPwaPage() {
     }
   };
 
+  const handleSaveIpCam = async () => {
+    if (!currentPenId || !ipCamInput.trim()) return;
+    try {
+      await configurePenCameraAPI(currentPenId, ipCamInput.trim(), 'ipcam');
+      setPens((prev) =>
+        prev.map((p) => (p.id === currentPenId ? { ...p, camera_url: ipCamInput.trim() } : p))
+      );
+      showToast('Đã cập nhật IP Camera');
+    } catch {
+      showToast('Lỗi cấu hình camera');
+    }
+  };
+
   const handleToggleFaceCam = async () => {
     if (isFaceCamOn) {
       setIsFaceCamOn(false);
@@ -226,6 +300,38 @@ export default function IosPwaPage() {
     } else {
       setIsFaceCamOn(true);
       await startCameraDeviceAPI('0', -1).catch(() => {});
+    }
+  };
+
+  const handleManualCheckIn = async (type: 'check_in' | 'check_out') => {
+    if (!selectedStaffId) return;
+    const staffObj = staffList.find((s) => s.id === selectedStaffId);
+    try {
+      await checkInStaff({
+        staffId: selectedStaffId,
+        staffName: staffObj?.full_name,
+        checkType: type,
+        penId: currentPenId || '123',
+        note: 'Điểm danh từ iOS PWA',
+      });
+      const logs = await getStaffAttendanceHistory(10);
+      setAttendanceHistory(logs);
+      showToast(type === 'check_in' ? '✅ Đã chấm công vào ca' : '🔴 Đã chấm công tan ca');
+    } catch (e: any) {
+      showToast(e?.message || 'Lỗi chấm công');
+    }
+  };
+
+  const handleTriggerBriefing = async () => {
+    try {
+      const res = await triggerDailyBriefing();
+      showToast('☀️ Đã tạo bản tin trang trại');
+      if (res?.briefing) {
+        setActiveTab('chat');
+        setMessages((prev) => [...prev, { sender: 'agent', text: res.briefing }]);
+      }
+    } catch {
+      showToast('Lỗi tạo bản tin');
     }
   };
 
@@ -246,12 +352,28 @@ export default function IosPwaPage() {
     }
   };
 
+  const getDeviceIcon = (name: string) => {
+    const lower = name.toLowerCase();
+    if (lower.includes('quạt') || lower.includes('fan')) return { icon: Fan, color: 'text-sky-600 bg-sky-50' };
+    if (lower.includes('sương') || lower.includes('mist')) return { icon: CloudRain, color: 'text-cyan-600 bg-cyan-50' };
+    if (lower.includes('sưởi') || lower.includes('đèn') || lower.includes('heat')) return { icon: Flame, color: 'text-orange-600 bg-orange-50' };
+    return { icon: Sprout, color: 'text-emerald-600 bg-emerald-50' };
+  };
+
   const actionStatus = formatActionLabel(telemetry);
   const ipWsUrl = getActionVideoStreamWsUrl(currentPenId || 'DEFAULT', 'ipcam', currentPen?.camera_url);
   const webcamWsUrl = getActionVideoStreamWsUrl(currentPenId || 'DEFAULT', 'webcam', currentPen?.webcam_url || '0');
 
   return (
     <div className="min-h-screen flex flex-col bg-[#F2F2F7] text-[#1C1C1E]">
+      {toast && (
+        <div className="fixed top-14 inset-x-4 z-50 flex justify-center pointer-events-none">
+          <div className="bg-slate-900/90 backdrop-blur-md text-white text-[13px] font-semibold px-4 py-2 rounded-full shadow-lg">
+            {toast}
+          </div>
+        </div>
+      )}
+
       <header className="sticky top-0 z-30 ios-glass ios-safe-top border-b border-black/10">
         <div className="px-4 py-2.5 flex items-center justify-between">
           <div>
@@ -275,11 +397,11 @@ export default function IosPwaPage() {
               {wsConnected ? 'Live' : 'Kết nối...'}
             </span>
             <button
-              onClick={() => loadDashboard(currentPenId || undefined)}
+              onClick={() => loadFarmData(currentPenId || undefined)}
               className="w-8 h-8 rounded-full bg-black/5 active:bg-black/10 flex items-center justify-center"
               aria-label="Làm mới"
             >
-              <RefreshCw className="w-4 h-4 text-slate-700" />
+              <RefreshCw className={`w-4 h-4 text-slate-700 ${isLoading ? 'animate-spin' : ''}`} />
             </button>
           </div>
         </div>
@@ -322,10 +444,28 @@ export default function IosPwaPage() {
 
         {activeTab === 'home' && (
           <>
+            {alerts.length > 0 && (
+              <div className="bg-rose-50 border border-rose-200 rounded-2xl p-3.5 flex items-start gap-2.5">
+                <Bell className="w-5 h-5 text-rose-600 shrink-0 mt-0.5" />
+                <div className="text-[13px] text-rose-900">
+                  <strong className="block">{alerts[0].alert_type || 'Cảnh báo hệ thống'}</strong>
+                  <span>{alerts[0].message}</span>
+                </div>
+              </div>
+            )}
+
             <section>
-              <h2 className="text-[13px] font-semibold uppercase tracking-wide text-slate-500 px-1 mb-2">
-                Môi trường chuồng trại
-              </h2>
+              <div className="flex items-center justify-between px-1 mb-2">
+                <h2 className="text-[13px] font-semibold uppercase tracking-wide text-slate-500">
+                  Môi trường & Quy mô
+                </h2>
+                <button
+                  onClick={handleTriggerBriefing}
+                  className="text-[12px] font-semibold text-emerald-600"
+                >
+                  ☀️ Bản tin AI
+                </button>
+              </div>
               <div className="grid grid-cols-2 gap-3">
                 <div className="bg-white rounded-2xl p-3.5 shadow-sm">
                   <div className="flex items-center justify-between text-rose-500 mb-1.5">
@@ -347,20 +487,20 @@ export default function IosPwaPage() {
                 </div>
                 <div className="bg-white rounded-2xl p-3.5 shadow-sm">
                   <div className="flex items-center justify-between text-amber-500 mb-1.5">
-                    <span className="text-[12px] font-semibold text-slate-500">Khí NH₃</span>
+                    <span className="text-[12px] font-semibold text-slate-500">Mức mùi / NH₃</span>
                     <Wind className="w-4 h-4" />
                   </div>
                   <div className="text-[24px] font-bold tracking-tight">
-                    {env.nh3 ?? env.ammonia ?? '--'} <span className="text-[13px] font-normal text-slate-400">ppm</span>
+                    {env.smell_level ?? env.nh3 ?? '--'}
                   </div>
                 </div>
                 <div className="bg-white rounded-2xl p-3.5 shadow-sm">
-                  <div className="flex items-center justify-between text-yellow-500 mb-1.5">
-                    <span className="text-[12px] font-semibold text-slate-500">Ánh sáng</span>
-                    <Sun className="w-4 h-4" />
+                  <div className="flex items-center justify-between text-emerald-600 mb-1.5">
+                    <span className="text-[12px] font-semibold text-slate-500">Vật nuôi / Cây</span>
+                    <Users className="w-4 h-4" />
                   </div>
-                  <div className="text-[24px] font-bold tracking-tight">
-                    {env.light ?? '--'} <span className="text-[13px] font-normal text-slate-400">lux</span>
+                  <div className="text-[20px] font-bold tracking-tight">
+                    {animalsCount} con • {cropsCount} cây
                   </div>
                 </div>
               </div>
@@ -368,41 +508,63 @@ export default function IosPwaPage() {
 
             <section>
               <h2 className="text-[13px] font-semibold uppercase tracking-wide text-slate-500 px-1 mb-2">
-                Điều khiển thiết bị
+                Điều khiển thiết bị ({devices.length})
               </h2>
               <div className="bg-white rounded-2xl shadow-sm divide-y divide-black/[0.06] overflow-hidden">
-                {[
-                  { key: 'fan', label: 'Quạt thông gió', icon: Fan, color: 'text-sky-600 bg-sky-50' },
-                  { key: 'mist', label: 'Máy phun sương', icon: CloudRain, color: 'text-cyan-600 bg-cyan-50' },
-                  { key: 'heater', label: 'Đèn sưởi ấm', icon: Flame, color: 'text-orange-600 bg-orange-50' },
-                  { key: 'pump', label: 'Máy bơm / Tưới', icon: Sprout, color: 'text-emerald-600 bg-emerald-50' },
-                ].map((item) => {
-                  const Icon = item.icon;
-                  const on = Boolean(devices[item.key]);
-                  return (
-                    <div key={item.key} className="px-4 py-3 flex items-center justify-between">
-                      <div className="flex items-center gap-3">
-                        <div className={`w-9 h-9 rounded-xl flex items-center justify-center ${item.color}`}>
-                          <Icon className="w-5 h-5" />
+                {devices.length === 0 ? (
+                  <p className="p-4 text-[13px] text-slate-500 text-center">
+                    Chưa có thiết bị IoT trong khu vực này
+                  </p>
+                ) : (
+                  devices.map((dev) => {
+                    const style = getDeviceIcon(dev.name || '');
+                    const Icon = style.icon;
+                    const on = Boolean(dev.is_active ?? dev.status);
+                    return (
+                      <div key={dev.id} className="px-4 py-3 flex items-center justify-between">
+                        <div className="flex items-center gap-3">
+                          <div className={`w-9 h-9 rounded-xl flex items-center justify-center ${style.color}`}>
+                            <Icon className="w-5 h-5" />
+                          </div>
+                          <div>
+                            <span className="text-[15px] font-medium block">{dev.name}</span>
+                            <span className="text-[11px] text-slate-400">{on ? 'Đang bật' : 'Đang tắt'}</span>
+                          </div>
                         </div>
-                        <span className="text-[15px] font-medium">{item.label}</span>
-                      </div>
-                      <button
-                        onClick={() => handleToggleDevice(item.key)}
-                        className={`w-[51px] h-[31px] rounded-full p-[2px] transition-colors ${
-                          on ? 'bg-emerald-500' : 'bg-[#E9E9EA]'
-                        }`}
-                        aria-label={item.label}
-                      >
-                        <span
-                          className={`block w-[27px] h-[27px] rounded-full bg-white shadow transition-transform ${
-                            on ? 'translate-x-[20px]' : 'translate-x-0'
+                        <button
+                          onClick={() => handleToggleDevice(dev)}
+                          className={`w-[51px] h-[31px] rounded-full p-[2px] transition-colors ${
+                            on ? 'bg-emerald-500' : 'bg-[#E9E9EA]'
                           }`}
-                        />
-                      </button>
-                    </div>
-                  );
-                })}
+                          aria-label={dev.name}
+                        >
+                          <span
+                            className={`block w-[27px] h-[27px] rounded-full bg-white shadow transition-transform ${
+                              on ? 'translate-x-[20px]' : 'translate-x-0'
+                            }`}
+                          />
+                        </button>
+                      </div>
+                    );
+                  })
+                )}
+              </div>
+            </section>
+
+            <section className="grid grid-cols-2 gap-3">
+              <div className="bg-white rounded-2xl p-3.5 shadow-sm">
+                <div className="flex items-center gap-2 text-slate-500 text-[12px] font-semibold mb-1">
+                  <Package className="w-4 h-4 text-amber-600" />
+                  <span>Kho vật tư</span>
+                </div>
+                <p className="text-[20px] font-bold">{inventory.length} mặt hàng</p>
+              </div>
+              <div className="bg-white rounded-2xl p-3.5 shadow-sm">
+                <div className="flex items-center gap-2 text-slate-500 text-[12px] font-semibold mb-1">
+                  <Calendar className="w-4 h-4 text-sky-600" />
+                  <span>Lịch chăm sóc</span>
+                </div>
+                <p className="text-[20px] font-bold">{schedules.length} lịch</p>
               </div>
             </section>
           </>
@@ -477,6 +639,21 @@ export default function IosPwaPage() {
               <Power className="w-4 h-4" />
               {isActionCamOn ? 'Tắt Camera Giám Sát' : 'Bật Camera Giám Sát'}
             </button>
+
+            <div className="bg-white rounded-2xl p-3.5 shadow-sm flex gap-2">
+              <input
+                value={ipCamInput}
+                onChange={(e) => setIpCamInput(e.target.value)}
+                placeholder="URL IP Cam (VD: http://192.168.1.x:8080/video)"
+                className="flex-1 text-[13px] bg-slate-100 rounded-xl px-3 py-2 outline-none"
+              />
+              <button
+                onClick={handleSaveIpCam}
+                className="px-3.5 py-2 rounded-xl bg-slate-900 text-white text-[12px] font-semibold"
+              >
+                Lưu
+              </button>
+            </div>
 
             {actionLogs.length > 0 && (
               <div className="bg-white rounded-2xl p-3.5 shadow-sm space-y-2">
@@ -555,6 +732,51 @@ export default function IosPwaPage() {
                 )}
               </div>
             )}
+
+            {staffList.length > 0 && (
+              <div className="bg-white rounded-2xl p-3.5 shadow-sm space-y-2.5">
+                <h3 className="text-[13px] font-semibold text-slate-500 uppercase">Chấm công nhanh</h3>
+                <select
+                  value={selectedStaffId}
+                  onChange={(e) => setSelectedStaffId(e.target.value)}
+                  className="w-full bg-slate-100 rounded-xl px-3 py-2 text-[14px] outline-none"
+                >
+                  {staffList.map((s) => (
+                    <option key={s.id} value={s.id}>
+                      {s.full_name} ({s.id})
+                    </option>
+                  ))}
+                </select>
+                <div className="grid grid-cols-2 gap-2">
+                  <button
+                    onClick={() => handleManualCheckIn('check_in')}
+                    className="py-2.5 rounded-xl bg-emerald-600 text-white text-[13px] font-bold"
+                  >
+                    🟢 Vào ca
+                  </button>
+                  <button
+                    onClick={() => handleManualCheckIn('check_out')}
+                    className="py-2.5 rounded-xl bg-rose-500 text-white text-[13px] font-bold"
+                  >
+                    🔴 Tan ca
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {attendanceHistory.length > 0 && (
+              <div className="bg-white rounded-2xl p-3.5 shadow-sm space-y-2">
+                <h3 className="text-[13px] font-semibold text-slate-500 uppercase">Lịch sử điểm danh</h3>
+                {attendanceHistory.slice(0, 5).map((rec, i) => (
+                  <div key={i} className="text-[13px] py-1.5 border-t border-black/5 flex justify-between">
+                    <span className="font-semibold">{rec.staff_name || rec.staff_id}</span>
+                    <span className="text-slate-500 text-[12px]">
+                      {rec.check_type === 'check_in' ? '🟢 Vào ca' : '🔴 Tan ca'}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
         )}
 
@@ -567,7 +789,7 @@ export default function IosPwaPage() {
                   className={`flex ${m.sender === 'user' ? 'justify-end' : 'justify-start'}`}
                 >
                   <div
-                    className={`max-w-[82%] px-3.5 py-2.5 rounded-2xl text-[14px] leading-relaxed ${
+                    className={`max-w-[82%] px-3.5 py-2.5 rounded-2xl text-[14px] leading-relaxed whitespace-pre-wrap ${
                       m.sender === 'user'
                         ? 'bg-emerald-600 text-white rounded-br-sm'
                         : 'bg-white text-slate-800 shadow-sm rounded-bl-sm'
