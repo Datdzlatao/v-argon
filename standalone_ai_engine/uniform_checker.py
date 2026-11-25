@@ -199,6 +199,7 @@ class UniformChecker:
         # 1. Phát hiện thân người toàn diện (HOG Person Detector + Face estimation)
         shirt_box = None
         pants_box = None
+        is_full_body = True
         if body_box is None:
             faces = [face_location] if face_location else None
             detections = self.get_body_boxes(frame, face_locations=faces)
@@ -207,29 +208,37 @@ class UniformChecker:
                 body_box = det["body_box"]
                 shirt_box = det.get("shirt_box")
                 pants_box = det.get("pants_box")
+                is_full_body = det.get("is_full_body", True)
         else:
             bx, by, bw, bh = body_box
             shirt_box = (bx, by + int(bh * 0.12), bw, int(bh * 0.38))
             pants_box = (bx, by + int(bh * 0.52), bw, int(bh * 0.38))
+            is_full_body = (bh >= bw * 1.35)
 
         # 2. Phân tích khẩu trang
         mask_info = self.detect_mask(frame, face_location=face_location, body_box=body_box)
         require_mask = (weekday in (-1, 10))
 
-        if body_box is None:
+        if body_box is None or not is_full_body:
+            msg = (
+                "⚠️ CHƯA THẤY ĐỦ TOÀN THÂN: Vui lòng lùi ra xa để camera nhìn thấy đầy đủ cả áo và quần (không chấm đạt khi chỉ thấy nửa người)!"
+                if body_box is not None
+                else "Không nhận diện được vóc dáng người trong ảnh. Vui lòng đứng trước camera để quét toàn thân."
+            )
             return {
-                "person_detected": False,
+                "person_detected": body_box is not None,
+                "is_full_body": False,
                 "is_correct": False,
-                "status": "UNCLEAR",
+                "status": "INCOMPLETE_BODY" if body_box is not None else "UNCLEAR",
                 "rule": rule_desc,
-                "message": "Không nhận diện được vóc dáng người trong ảnh. Vui lòng đứng trước camera để quét toàn thân.",
+                "message": msg,
                 "shirt_color": "unknown",
                 "shirt_ratio": 0.0,
                 "pants_color": "unknown",
                 "pants_ratio": 0.0,
-                "body_box": None,
-                "shirt_box": None,
-                "pants_box": None,
+                "body_box": list(body_box) if body_box else None,
+                "shirt_box": list(shirt_box) if shirt_box else None,
+                "pants_box": list(pants_box) if pants_box else None,
                 "mask": mask_info,
                 "require_mask": require_mask
             }
@@ -290,6 +299,7 @@ class UniformChecker:
 
         return {
             "person_detected": True,
+            "is_full_body": True,
             "is_correct": is_correct,
             "status": status,
             "rule": rule_desc,

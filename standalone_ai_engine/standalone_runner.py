@@ -122,18 +122,6 @@ class StandaloneVisionPipeline:
         if uni and uni.get("body_box"):
             canvas = self.uniform_checker.draw_uniform_hud(canvas, uni)
 
-        # 3. Thanh thông tin phía dưới màn hình
-        bar_h = 45
-        overlay = canvas.copy()
-        cv2.rectangle(overlay, (0, h - bar_h), (w, h), (20, 20, 20), -1)
-        cv2.addWeighted(overlay, 0.75, canvas, 0.25, 0, canvas)
-
-        rule_str = uni.get("rule", "") if uni else "24/7 Mọi lúc"
-        ms_str = result.get("process_time_ms", 0)
-        faces_n = result.get("faces_detected", 0)
-        status_text = f"Smart Farm AI Vision | {ms_str}ms | Faces: {faces_n} | Chấm công 24/7 mọi lúc"
-        cv2.putText(canvas, status_text, (15, h - 16),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.48, (220, 230, 240), 1, cv2.LINE_AA)
         return canvas
 
 

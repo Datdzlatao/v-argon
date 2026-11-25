@@ -115,11 +115,13 @@ class PersonDetector:
                 if bh < bw * 1.1 or bh < 60:
                     continue
 
+                is_full_body = (bh >= bw * 1.35)
                 detections.append({
                     "body_box": (bx, by, bw, bh),
                     "shirt_box": (bx, by + int(bh * SHIRT_ZONE_TOP), bw, int(bh * (SHIRT_ZONE_BOTTOM - SHIRT_ZONE_TOP))),
                     "pants_box": (bx, by + int(bh * PANTS_ZONE_TOP), bw, int(bh * (PANTS_ZONE_BOTTOM - PANTS_ZONE_TOP))),
-                    "source": "hog"
+                    "source": "hog",
+                    "is_full_body": is_full_body
                 })
 
         # Fallback from face locations if HOG missed
@@ -131,21 +133,25 @@ class PersonDetector:
 
                 # Estimate body from face
                 bw = int(fw * 2.8)
-                bh = int(fh * 6.5)
+                bh_expected = int(fh * 6.5)
                 bx = max(0, int(left - (bw - fw) / 2))
                 by = max(0, top)
                 bw = min(bw, w - bx)
-                bh = min(bh, h - by)
+                bh = min(bh_expected, h - by)
+
+                # Chỉ công nhận đủ toàn thân nếu khung hình chứa được ít nhất từ đầu tới vùng quần/đầu gối (>= 5.0x chiều cao mặt)
+                is_full_body = (fh > 0) and (by + int(fh * 5.2) <= h) and (bh >= fh * 5.0) and (bh >= bw * 1.35)
 
                 if bw > 20 and bh > 40:
                     detections.append({
                         "body_box": (bx, by, bw, bh),
                         "shirt_box": (bx, by + int(bh * SHIRT_ZONE_TOP), bw, int(bh * (SHIRT_ZONE_BOTTOM - SHIRT_ZONE_TOP))),
                         "pants_box": (bx, by + int(bh * PANTS_ZONE_TOP), bw, int(bh * (PANTS_ZONE_BOTTOM - PANTS_ZONE_TOP))),
-                        "source": "face"
+                        "source": "face",
+                        "is_full_body": is_full_body
                     })
 
-        # Fallback 3: Center-frame person estimation (when HOG is unavailable in OpenCV 5.x and face is masked/occluded)
+        # Fallback 3: Center-frame estimation (không thể xác nhận đủ toàn thân nếu không có HOG/Face)
         if not detections and (self.hog is None or len(boxes_raw) == 0):
             bx = int(w * 0.15)
             by = int(h * 0.05)
@@ -155,7 +161,8 @@ class PersonDetector:
                 "body_box": (bx, by, bw, bh),
                 "shirt_box": (bx, by + int(bh * SHIRT_ZONE_TOP), bw, int(bh * (SHIRT_ZONE_BOTTOM - SHIRT_ZONE_TOP))),
                 "pants_box": (bx, by + int(bh * PANTS_ZONE_TOP), bw, int(bh * (PANTS_ZONE_BOTTOM - PANTS_ZONE_TOP))),
-                "source": "frame_center"
+                "source": "frame_center",
+                "is_full_body": False
             })
 
         return detections

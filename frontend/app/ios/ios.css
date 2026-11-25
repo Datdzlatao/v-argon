@@ -1,0 +1,21 @@
+.ios-safe-top {
+  padding-top: env(safe-area-inset-top);
+}
+
+.ios-safe-bottom {
+  padding-bottom: env(safe-area-inset-bottom);
+}
+
+.ios-glass {
+  background: rgba(255, 255, 255, 0.84);
+  backdrop-filter: saturate(180%) blur(20px);
+  -webkit-backdrop-filter: saturate(180%) blur(20px);
+}
+
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+.no-scrollbar {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}

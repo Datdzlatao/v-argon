@@ -65,15 +65,23 @@ class CameraStreamService:
         self.error_message = None
 
         print(f"[CAM SERVICE] Đang kết nối tới nguồn camera: {self.source}...")
-        cap = cv2.VideoCapture(self.source)
+        if isinstance(self.source, int) and hasattr(cv2, "CAP_V4L2"):
+            cap = cv2.VideoCapture(self.source, cv2.CAP_V4L2)
+            if not cap.isOpened():
+                cap = cv2.VideoCapture(self.source)
+        else:
+            cap = cv2.VideoCapture(self.source)
         if not cap.isOpened():
             self.error_message = f"Không thể mở nguồn camera: {self.source}"
             print(f"[CAM SERVICE ERROR] {self.error_message}")
             return False
 
-        # Tối ưu kích thước và buffer giảm độ trễ tối đa
+        # Tối ưu kích thước, định dạng MJPG (tránh nghẽn băng thông USB YUYV 10-15 FPS) và buffer
+        if isinstance(self.source, int):
+            cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*"MJPG"))
         cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
         cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
+        cap.set(cv2.CAP_PROP_FPS, 30)
         cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
 
         self.cap = cap
@@ -115,11 +123,14 @@ class CameraStreamService:
         """Luồng thu nhận khung hình tốc độ cao (30 FPS) và mã hóa JPEG stream tối ưu."""
         frame_count = 0
         start_time = time.time()
+        target_interval = 1.0 / 30.0
+        encode_params = [int(cv2.IMWRITE_JPEG_QUALITY), 50, int(cv2.IMWRITE_JPEG_OPTIMIZE), 0]
 
         while self.is_running and self.cap is not None:
+            loop_start = time.perf_counter()
             ret, frame = self.cap.read()
             if not ret or frame is None:
-                time.sleep(0.01)
+                time.sleep(0.005)
                 continue
 
             # Chuẩn hóa độ phân giải tối đa 640px để giảm độ trễ & tải CPU
@@ -135,8 +146,8 @@ class CameraStreamService:
             # Vẽ HUD nhận diện lên khung hình
             annotated = self.pipeline.draw_hud(frame, res)
 
-            # Mã hóa JPEG chất lượng 55 tối ưu băng thông internet và giảm triệt để độ trễ
-            _, hud_jpg = cv2.imencode(".jpg", annotated, [cv2.IMWRITE_JPEG_QUALITY, 55])
+            # Mã hóa JPEG nhẹ tối ưu băng thông internet và giảm triệt để độ trễ
+            _, hud_jpg = cv2.imencode(".jpg", annotated, encode_params)
 
             with self.lock:
                 self.latest_jpeg = hud_jpg.tobytes()
@@ -149,7 +160,10 @@ class CameraStreamService:
                 frame_count = 0
                 start_time = now
 
-            time.sleep(0.01)
+            loop_elapsed = time.perf_counter() - loop_start
+            sleep_time = target_interval - loop_elapsed
+            if sleep_time > 0.001:
+                time.sleep(sleep_time)
 
     def _ai_worker_loop(self):
         """Luồng xử lý AI bất đồng bộ tốc độ cao (Zero-lag)."""
@@ -187,8 +201,8 @@ class CameraStreamService:
                 ai_count = 0
                 start_time = now
 
-            # Nghỉ siêu ngắn để giữ AI phản hồi cực nhạy
-            time.sleep(0.005)
+            # Nghỉ hợp lý để không chiếm hết CPU/GIL của luồng stream video (~3-4 AI scans/s là dư dùng cho điểm danh)
+            time.sleep(0.08)
 
     def get_status(self) -> Dict[str, Any]:
         """Lấy thông tin trạng thái dịch vụ và số liệu telemetries."""
