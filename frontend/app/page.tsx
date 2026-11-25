@@ -7,7 +7,10 @@ import {
   connectAgentWebSocket, 
   triggerDailyBriefing, 
   controlDeviceViaAPI,
-  updatePenMetadataAPI 
+  updatePenMetadataAPI,
+  fetchNewsfeedState,
+  executeNewsfeedQuickApi,
+  NewsfeedItem,
 } from '../lib/agent-api';
 import Navbar from '../components/Navbar';
 import LeftSidebar from '../components/LeftSidebar';
@@ -67,10 +70,88 @@ export default function Home() {
   // Messenger Floating State
   const [isMessengerOpen, setIsMessengerOpen] = useState(false);
 
-  // Agent Connection & Briefing
+  // Agent Connection & Briefing & Newsfeed
   const [wsConnected, setWsConnected] = useState(false);
   const [briefingText, setBriefingText] = useState('');
   const [isBriefingLoading, setIsBriefingLoading] = useState(false);
+  const [newsfeedItems, setNewsfeedItems] = useState<NewsfeedItem[]>([]);
+  const [newsfeedCounts, setNewsfeedCounts] = useState<{
+    pending: number;
+    lowStock: number;
+    sick: number;
+  } | null>(null);
+  const [isNewsfeedLoading, setIsNewsfeedLoading] = useState(false);
+
+  const loadNewsfeed = async (penId?: string) => {
+    setIsNewsfeedLoading(true);
+    const state = await fetchNewsfeedState(penId, 12);
+    if (state) {
+      setNewsfeedItems(state.items || []);
+      if (state.summary_text) {
+        setBriefingText(state.summary_text);
+      }
+      setNewsfeedCounts({
+        pending: state.pending_tasks_count,
+        lowStock: state.low_stock_count,
+        sick: state.sick_animals_count,
+      });
+    }
+    setIsNewsfeedLoading(false);
+  };
+
+  const handleNewsfeedQuickAction = async (item: NewsfeedItem) => {
+    // Luôn chuyển đúng khu vực (pen_id) trước khi thao tác
+    if (item.pen_id && item.pen_id !== currentPenIdRef.current) {
+      setCurrentPenId(item.pen_id);
+      currentPenIdRef.current = item.pen_id;
+      await loadPenData(item.pen_id);
+    }
+
+    if (item.quick_api) {
+      try {
+        await executeNewsfeedQuickApi(item.quick_api.endpoint, item.quick_api.body);
+        showRealtimeNotification('devices', `Đã xử lý tại ${item.title}: ${item.action_label}`);
+        await loadPenData(item.pen_id || currentPenIdRef.current);
+        await loadNewsfeed();
+      } catch {
+        showRealtimeNotification('devices', 'Không kết nối được tới máy chủ thiết bị');
+      }
+      return;
+    }
+
+    if (item.action_route === 'chat') {
+      setIsMessengerOpen(true);
+    } else if (item.action_route === 'inventory') {
+      document.getElementById('section-inventory')?.scrollIntoView({ behavior: 'smooth' });
+      setModalOpen((prev) => ({ ...prev, importInv: true }));
+    } else if (item.action_route === 'livestock') {
+      setCurrentMode('livestock');
+      currentModeRef.current = 'livestock';
+      document.getElementById('section-livestock-crops')?.scrollIntoView({ behavior: 'smooth' });
+      if (item.target_type === 'animal' && item.target_id) {
+        setSelectedAnimalId(item.target_id);
+        selectedAnimalIdRef.current = item.target_id;
+        const { data } = await supabase.from('health_logs').select('*').eq('animal_id', item.target_id);
+        setAnimalHealthLogs(data || []);
+        setModalOpen((prev) => ({ ...prev, health: true }));
+      }
+    } else if (item.action_route === 'crops') {
+      setCurrentMode('cultivation');
+      currentModeRef.current = 'cultivation';
+      document.getElementById('section-livestock-crops')?.scrollIntoView({ behavior: 'smooth' });
+      if (item.target_type === 'crop' && item.target_id) {
+        setSelectedCropId(item.target_id);
+        selectedCropIdRef.current = item.target_id;
+        const { data } = await supabase.from('crop_care_logs').select('*').eq('crop_id', item.target_id);
+        setCropCareLogs(data || []);
+        setModalOpen((prev) => ({ ...prev, cropCare: true }));
+      }
+    } else if (item.action_route === 'camera') {
+      document.getElementById('section-camera')?.scrollIntoView({ behavior: 'smooth' });
+    } else {
+      document.getElementById('section-env')?.scrollIntoView({ behavior: 'smooth' });
+    }
+  };
 
   // Modals Open State
   const [modalOpen, setModalOpen] = useState({
@@ -140,6 +221,22 @@ export default function Home() {
       setSession(session);
       if (session) loadInitialData(session);
     });
+    loadNewsfeed();
+
+    const onVisibility = () => {
+      if (document.visibilityState === 'visible') {
+        loadNewsfeed();
+      }
+    };
+    document.addEventListener('visibilitychange', onVisibility);
+    const pollTimer = setInterval(() => {
+      loadNewsfeed();
+    }, 10000);
+
+    return () => {
+      document.removeEventListener('visibilitychange', onVisibility);
+      clearInterval(pollTimer);
+    };
 
     const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
       setSession(session);
@@ -175,6 +272,13 @@ export default function Home() {
             ...prev,
             [data.pen_id || 'unknown']: [data.message],
           }));
+          loadNewsfeed();
+        } else if (event === 'newsfeed_update') {
+          if (data && Array.isArray(data.items)) {
+            setNewsfeedItems(data.items);
+          } else {
+            loadNewsfeed();
+          }
         } else if (event === 'staff_checkin') {
           const actionText = data.check_type === 'check_out' ? 'tan ca' : 'vào ca';
           showRealtimeNotification('staff', `👤 Nhân sự ${data.staff_name || data.staff_id} đã ${actionText} (${data.pen_id || 'Trang trại'})`);
@@ -866,7 +970,7 @@ export default function Home() {
       />
 
       {/* 2. Main 3-Column Layout */}
-      <div className="max-w-7xl mx-auto w-full px-2 sm:px-4 py-4 flex gap-4 flex-1">
+      <div className="max-w-7xl mx-auto w-full px-2 sm:px-4 py-4 flex gap-4 flex-1 min-w-0 overflow-x-hidden">
         {/* Left Column (Navigation & Pens) */}
         <LeftSidebar
           userEmail={session?.user?.email || 'nongdan@smartfarm.vn'}
@@ -883,7 +987,7 @@ export default function Home() {
         />
 
         {/* Center Column: The Facebook Newsfeed */}
-        <main className="flex-1 max-w-2xl mx-auto w-full space-y-4">
+        <main className="flex-1 min-w-0 max-w-2xl mx-auto w-full space-y-4">
           {/* A. Facebook Stories Row */}
           <StoriesBar
             pens={pens.map((p) => ({
@@ -930,23 +1034,29 @@ export default function Home() {
             />
           )}
 
-          {/* C. AI Morning Briefing Post */}
+          {/* C. Unified Live Observer News Feed & Morning Briefing */}
           <FeedBriefingCard
             onOpenChat={() => setIsMessengerOpen(true)}
-            pendingTasksCount={2}
-            lowStockCount={inventory.filter((i) => i.quantity <= 5).length}
+            pendingTasksCount={newsfeedCounts?.pending ?? 2}
+            lowStockCount={newsfeedCounts?.lowStock ?? inventory.filter((i) => i.quantity <= 5).length}
             sickAnimalsCount={
-              currentMode === 'livestock'
-                ? animals.filter((a) => a.feeding_status === 'Anorexic' || a.status === 'Sick').length
-                : crops.filter((c) => (c.status || '').toLowerCase().includes('care') || (c.status || '').toLowerCase().includes('sick') || (c.status || '').toLowerCase().includes('dry')).length
+              newsfeedCounts?.sick ?? (
+                currentMode === 'livestock'
+                  ? animals.filter((a) => a.feeding_status === 'Anorexic' || a.status === 'Sick').length
+                  : crops.filter((c) => (c.status || '').toLowerCase().includes('care') || (c.status || '').toLowerCase().includes('sick') || (c.status || '').toLowerCase().includes('dry')).length
+              )
             }
             briefingText={briefingText}
             onTriggerBriefing={handleTriggerBriefing}
-            isLoading={isBriefingLoading}
+            isLoading={isBriefingLoading || isNewsfeedLoading}
             currentMode={currentMode}
+            newsfeedItems={newsfeedItems}
+            onRefreshNewsfeed={() => loadNewsfeed()}
+            onQuickAction={handleNewsfeedQuickAction}
           />
 
           {/* D. Realtime Environment Monitor Post (Chart.js + Gauges) */}
+          <div id="section-env">
           <FeedEnvMonitor
             penName={currentPen.name}
             penId={currentPenId}
@@ -958,6 +1068,7 @@ export default function Home() {
             onRefresh={() => loadPenData(currentPenIdRef.current)}
             onOpenChat={() => setIsMessengerOpen(true)}
           />
+          </div>
 
           {/* E. Staff Attendance & 24/7 Face Scan Feed Post */}
           <FeedStaffAttendance
@@ -967,6 +1078,7 @@ export default function Home() {
           />
 
           {/* F. Camera Giám Sát Chuồng Trại 2 Luồng (IP Cam & Webcam) & AI Action Tracking (Port 8002) */}
+          <div id="section-camera">
           <FeedPenCamera
             currentPenId={currentPenId}
             penName={currentPen.name}
@@ -976,8 +1088,10 @@ export default function Home() {
             onOpenConfigCamera={() => setModalOpen({ ...modalOpen, configCamera: true })}
             onNotification={(title, desc) => showRealtimeNotification('action_vision', desc)}
           />
+          </div>
 
           {/* G. Livestock & Crops Feed Post */}
+          <div id="section-livestock-crops">
           <FeedLivestockCrops
             currentMode={currentMode}
             animals={animals}
@@ -1037,14 +1151,17 @@ export default function Home() {
               }
             }}
           />
+          </div>
 
           {/* G. Inventory Feed Post */}
+          <div id="section-inventory">
           <FeedInventory
             items={inventory}
             currentMode={currentMode}
             onOpenImport={() => setModalOpen({ ...modalOpen, importInv: true })}
             onOpenExport={() => setModalOpen({ ...modalOpen, exportInv: true })}
           />
+          </div>
         </main>
 
         {/* Right Column: IoT Switches & Activity Stream */}

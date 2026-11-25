@@ -319,11 +319,50 @@ ON public.action_logs (created_at DESC);
 
 ALTER TABLE public.action_logs ENABLE ROW LEVEL SECURITY;
 
+DROP POLICY IF EXISTS "Allow select for authenticated and anon on action_logs" ON public.action_logs;
 CREATE POLICY "Allow select for authenticated and anon on action_logs" 
 ON public.action_logs FOR SELECT 
 USING (true);
 
+DROP POLICY IF EXISTS "Allow insert for authenticated and anon on action_logs" ON public.action_logs;
 CREATE POLICY "Allow insert for authenticated and anon on action_logs" 
 ON public.action_logs FOR INSERT 
 WITH CHECK (true);
+
+-- ==============================================================================
+-- BƯỚC 6: BẢNG FARM_NEWSFEED_STATE ĐỒNG BỘ VĂN BẢN TÓM TẮT & NEWSFEED ĐA THIẾT BỊ
+-- ==============================================================================
+CREATE TABLE IF NOT EXISTS public.farm_newsfeed_state (
+    id TEXT PRIMARY KEY DEFAULT 'global',
+    summary_text TEXT NOT NULL DEFAULT '',
+    briefing_text TEXT,
+    items JSONB NOT NULL DEFAULT '[]'::jsonb,
+    pending_tasks_count INTEGER NOT NULL DEFAULT 0,
+    low_stock_count INTEGER NOT NULL DEFAULT 0,
+    sick_animals_count INTEGER NOT NULL DEFAULT 0,
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+ALTER TABLE public.farm_newsfeed_state ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS "Allow select for authenticated and anon on farm_newsfeed_state" ON public.farm_newsfeed_state;
+CREATE POLICY "Allow select for authenticated and anon on farm_newsfeed_state"
+ON public.farm_newsfeed_state FOR SELECT
+USING (true);
+
+DROP POLICY IF EXISTS "Allow insert for authenticated and anon on farm_newsfeed_state" ON public.farm_newsfeed_state;
+CREATE POLICY "Allow insert for authenticated and anon on farm_newsfeed_state"
+ON public.farm_newsfeed_state FOR INSERT
+WITH CHECK (true);
+
+DROP POLICY IF EXISTS "Allow update for authenticated and anon on farm_newsfeed_state" ON public.farm_newsfeed_state;
+CREATE POLICY "Allow update for authenticated and anon on farm_newsfeed_state"
+ON public.farm_newsfeed_state FOR UPDATE
+USING (true)
+WITH CHECK (true);
+
+INSERT INTO public.farm_newsfeed_state (id, summary_text, items)
+VALUES ('global', 'Hệ thống quan sát 24/7 đã sẵn sàng đồng bộ bản tin trang trại.', '[]'::jsonb)
+ON CONFLICT (id) DO NOTHING;
+
 

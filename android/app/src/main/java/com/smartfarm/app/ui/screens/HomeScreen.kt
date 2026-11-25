@@ -12,6 +12,7 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
+import com.smartfarm.app.data.models.NewsfeedItem
 import com.smartfarm.app.ui.components.*
 import com.smartfarm.app.ui.theme.*
 import com.smartfarm.app.ui.viewmodel.FarmViewModel
@@ -20,6 +21,7 @@ import com.smartfarm.app.ui.viewmodel.FarmViewModel
 fun HomeScreen(
     viewModel: FarmViewModel,
     onOpenChat: () -> Unit,
+    onNavigateItem: (NewsfeedItem) -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     val pens by viewModel.pens.collectAsState()
@@ -31,12 +33,11 @@ fun HomeScreen(
     val activeAlerts by viewModel.activeAlerts.collectAsState()
     val briefing by viewModel.dailyBriefing.collectAsState()
     val isBriefingLoading by viewModel.isBriefingLoading.collectAsState()
-    val actionTelemetry by viewModel.actionTelemetry.collectAsState()
-    val actionLogs by viewModel.actionLogs.collectAsState()
+    val newsfeedItems by viewModel.newsfeedItems.collectAsState()
+    val isNewsfeedLoading by viewModel.isNewsfeedLoading.collectAsState()
 
     var showAddPenDialog by remember { mutableStateOf(false) }
     var showAddDeviceDialog by remember { mutableStateOf(false) }
-    var showConfigCameraDialog by remember { mutableStateOf(false) }
 
     val currentPen = pens.firstOrNull { it.id == currentPenId }
     val currentPenName = currentPen?.name ?: (if (currentMode == "livestock") "Chuồng Nuôi Hiện Tại" else "Vườn Trồng Hiện Tại")
@@ -96,32 +97,30 @@ fun HomeScreen(
                 onDismiss = { viewModel.dismissAlert() }
             )
 
-            // 3. Bản tin sáng thông minh
+            // 3. Thẻ hợp nhất: Bản Tin Quan Sát Trực Tiếp & Bản Tin Sáng
             MorningBriefingCard(
                 briefing = briefing,
-                isLoading = isBriefingLoading,
-                onRefresh = { viewModel.refreshBriefing() },
+                isLoading = isBriefingLoading || isNewsfeedLoading,
+                onRefresh = {
+                    viewModel.loadNewsfeed(null)
+                    viewModel.refreshBriefing()
+                },
                 onOpenChat = onOpenChat,
-                currentMode = currentMode
-            )
-
-            // 4. Camera Giám Sát Chuồng Nuôi AI (Port 8002 - Đồng bộ với Frontend)
-            FeedPenCameraCard(
-                currentPenId = currentPenId,
-                penName = currentPenName,
-                penCameraUrl = currentPen?.cameraUrl ?: "",
-                penWebcamUrl = currentPen?.webcamUrl ?: "0",
                 currentMode = currentMode,
-                telemetry = actionTelemetry,
-                actionLogs = actionLogs,
-                onConfigureCamera = { showConfigCameraDialog = true },
-                onRefreshLogs = { viewModel.refreshActionLogs(currentPenId) },
-                onToggleCamera = { active ->
-                    if (!active) viewModel.stopPenCamera(currentPenId)
+                newsfeedItems = newsfeedItems,
+                onQuickAction = { item ->
+                    if (!item.penId.isNullOrBlank() && item.penId != currentPenId) {
+                        viewModel.selectPen(item.penId)
+                    }
+                    if (item.quickDeviceType != null) {
+                        viewModel.executeNewsfeedQuickDevice(item)
+                    } else {
+                        onNavigateItem(item)
+                    }
                 }
             )
 
-            // 5. Giám sát các chỉ số môi trường
+            // 4. Giám sát các chỉ số môi trường
             EnvironmentMetricCards(
                 envData = envData,
                 historyLogs = historyLogs,
@@ -155,18 +154,6 @@ fun HomeScreen(
             penId = currentPenId,
             onDismiss = { showAddDeviceDialog = false },
             onConfirm = { name, pin -> viewModel.addDevice(name, pin) }
-        )
-
-        ConfigCameraDialog(
-            isOpen = showConfigCameraDialog,
-            penId = currentPenId,
-            penName = currentPenName,
-            currentUrl = currentPen?.cameraUrl,
-            currentWebcamUrl = currentPen?.webcamUrl ?: "0",
-            onDismiss = { showConfigCameraDialog = false },
-            onConfirm = { newIpUrl, newWebcamUrl ->
-                viewModel.updatePenCameras(currentPenId, newIpUrl, newWebcamUrl)
-            }
         )
     }
 }

@@ -8,6 +8,7 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
+import androidx.navigation.NavGraph.Companion.findStartDestination
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.currentBackStackEntryAsState
@@ -54,6 +55,25 @@ fun MainAppScaffold(viewModel: FarmViewModel) {
 
     val snackbarHostState = remember { SnackbarHostState() }
 
+    val navigateToTab: (String) -> Unit = { route ->
+        if (route == Screen.Home.route) {
+            val popped = navController.popBackStack(Screen.Home.route, inclusive = false)
+            if (!popped) {
+                navController.navigate(Screen.Home.route) {
+                    launchSingleTop = true
+                }
+            }
+        } else {
+            navController.navigate(route) {
+                popUpTo(navController.graph.findStartDestination().id) {
+                    saveState = true
+                }
+                launchSingleTop = true
+                restoreState = true
+            }
+        }
+    }
+
     // Show realtime toast via Snackbar
     LaunchedEffect(realtimeToast) {
         realtimeToast?.let { msg ->
@@ -83,13 +103,7 @@ fun MainAppScaffold(viewModel: FarmViewModel) {
             if (currentRoute != Screen.AIChat.route) {
                 FarmBottomNavigation(
                     currentRoute = currentRoute,
-                    onNavigate = { route ->
-                        navController.navigate(route) {
-                            popUpTo(Screen.Home.route) { saveState = true }
-                            launchSingleTop = true
-                            restoreState = true
-                        }
-                    }
+                    onNavigate = navigateToTab
                 )
             }
         },
@@ -103,7 +117,28 @@ fun MainAppScaffold(viewModel: FarmViewModel) {
             composable(Screen.Home.route) {
                 HomeScreen(
                     viewModel = viewModel,
-                    onOpenChat = { navController.navigate(Screen.AIChat.route) }
+                    onOpenChat = { navController.navigate(Screen.AIChat.route) },
+                    onNavigateItem = { item ->
+                        when (item.actionRoute) {
+                            "inventory" -> {
+                                viewModel.showToast("Đang mở kho: ${item.targetId ?: "Vật tư"}")
+                                navigateToTab(Screen.Inventory.route)
+                            }
+                            "livestock" -> {
+                                viewModel.setMode("livestock")
+                                viewModel.showToast("Đang mở hồ sơ ${item.targetId ?: "vật nuôi"} tại ${item.title}")
+                                navigateToTab(Screen.LivestockCrops.route)
+                            }
+                            "crops" -> {
+                                viewModel.setMode("cultivation")
+                                viewModel.showToast("Đang kiểm tra cây trồng tại ${item.title}")
+                                navigateToTab(Screen.LivestockCrops.route)
+                            }
+                            "camera" -> navigateToTab(Screen.CameraAction.route)
+                            "devices", "env" -> viewModel.showToast("Đang xem khu vực ${item.title}")
+                            else -> navController.navigate(Screen.AIChat.route)
+                        }
+                    }
                 )
             }
 

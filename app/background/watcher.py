@@ -1,16 +1,23 @@
 import asyncio
 import logging
-from typing import Optional
+from typing import Any, Optional
 
 from app.db.repositories.env_logs import EnvLogsRepository
+from app.db.repositories.pens import PensRepository
+from app.db.repositories.inventory import InventoryRepository
+from app.db.repositories.animals import AnimalsRepository
+from app.db.repositories.crops import CropsRepository
 from app.mcp.mcp_server import create_system_alert, control_device
+from app.api.websocket_manager import ws_manager
+from app.background.newsfeed_service import sync_newsfeed_to_store
 from app.config import get_settings
 
 logger = logging.getLogger("smart_manager.watcher")
 
 _watcher_task: Optional[asyncio.Task] = None
 _is_running = False
-_last_processed_log_id: Optional[int] = None
+_last_processed_log_by_pen: dict[str, Any] = {}
+_seen_proactive_keys: set[str] = set()
 
 # Ngưỡng phát hiện bất thường môi trường chuồng trại
 DELTA_TEMP_THRESHOLD = 3.0       # Biến thiên nhiệt độ >= 3.0°C giữa 2 lần đo liên tiếp
@@ -55,67 +62,153 @@ async def _evaluate_anomaly_with_gemini(log_curr: dict, log_prev: dict, reasons:
     )
 
 
+async def _run_proactive_farm_sweep():
+    """
+    Proactive multi-domain observation:
+    Checks low-stock inventory, sick animals, and urgent crops every few cycles,
+    emitting deduplicated alerts so the agent doesn't wait until 07:00 AM.
+    """
+    try:
+        low_stocks = InventoryRepository().get_low_stock()
+        for item in low_stocks:
+            key = f"low_stock:{item.get('name')}"
+            if key not in _seen_proactive_keys:
+                _seen_proactive_keys.add(key)
+                create_system_alert(
+                    alert_type="LOW_STOCK",
+                    message=(
+                        f"Kho vật tư '{item.get('name')}' sắp hết "
+                        f"(còn {item.get('quantity')} {item.get('unit')}, ngưỡng tối thiểu {item.get('min_threshold')})."
+                    ),
+                    pen_id="123",
+                )
+    except Exception as e:
+        logger.debug(f"Proactive inventory sweep skipped: {e}")
+
+    try:
+        sick_animals = AnimalsRepository().get_sick_or_attention_animals()
+        for animal in sick_animals:
+            key = f"sick_animal:{animal.get('id')}:{animal.get('status')}"
+            if key not in _seen_proactive_keys:
+                _seen_proactive_keys.add(key)
+                create_system_alert(
+                    alert_type="HEALTH_ALERT",
+                    message=(
+                        f"Phát hiện vật nuôi {animal.get('id')} ({animal.get('species')}) "
+                        f"có trạng thái '{animal.get('status')}' cần kiểm tra y tế ngay."
+                    ),
+                    pen_id=str(animal.get("pen_id") or "123"),
+                )
+    except Exception as e:
+        logger.debug(f"Proactive animal sweep skipped: {e}")
+
+    try:
+        urgent_crops = CropsRepository().get_upcoming_harvests(within_days=3)
+        for crop in urgent_crops:
+            key = f"harvest:{crop.get('id')}"
+            if key not in _seen_proactive_keys:
+                _seen_proactive_keys.add(key)
+                create_system_alert(
+                    alert_type="HARVEST_READY",
+                    message=(
+                        f"Cây trồng '{crop.get('name')}' sắp đến kỳ thu hoạch "
+                        f"(còn {crop.get('days_remaining')} ngày)."
+                    ),
+                    pen_id=str(crop.get("pen_id") or "Vườn01"),
+                )
+    except Exception as e:
+        logger.debug(f"Proactive crop sweep skipped: {e}")
+
+
 async def env_watcher_loop(interval_seconds: int = 15):
     """
     Background Task loop (The Watcher):
-    Continuously monitors the 2 most recent env_logs records.
+    Continuously monitors env_logs PER PEN (avoiding cross-pen false deltas)
+    and runs periodic proactive sweeps across inventory, animals, and crops.
     """
-    global _last_processed_log_id, _is_running
+    global _is_running
     env_repo = EnvLogsRepository()
+    pens_repo = PensRepository()
+    cycle_count = 0
     logger.info("The Watcher started (interval: %d seconds)...", interval_seconds)
 
     while _is_running:
         try:
-            logs = env_repo.get_latest_logs(limit=2)
+            pens = pens_repo.list_all()
+            pen_ids = [str(p.get("id")) for p in pens if p.get("id")] or ["123"]
+            has_new_update = False
 
-            if len(logs) >= 2:
+            for pen_id in pen_ids:
+                logs = env_repo.get_latest_logs(limit=2, pen_id=pen_id)
+                if not logs:
+                    continue
+
                 curr = logs[0]
-                prev = logs[1]
                 curr_id = curr.get("id")
+                if curr_id == _last_processed_log_by_pen.get(pen_id):
+                    continue
+                _last_processed_log_by_pen[pen_id] = curr_id
+                has_new_update = True
 
-                # Chỉ xử lý khi có bản ghi mới
-                if curr_id != _last_processed_log_id:
-                    _last_processed_log_id = curr_id
-                    t_curr = float(curr.get("temperature", 0))
-                    t_prev = float(prev.get("temperature", 0))
-                    h_curr = float(curr.get("humidity", 0))
-                    h_prev = float(prev.get("humidity", 0))
-                    s_curr = float(curr.get("smell_level", 0))
-                    pen_id = str(curr.get("pen_id") or "123")
+                prev = logs[1] if len(logs) >= 2 else curr
+                t_curr = float(curr.get("temperature", 0))
+                t_prev = float(prev.get("temperature", t_curr))
+                h_curr = float(curr.get("humidity", 0))
+                h_prev = float(prev.get("humidity", h_curr))
+                s_curr = float(curr.get("smell_level", 0))
 
-                    delta_temp = abs(t_curr - t_prev)
-                    delta_hum = abs(h_curr - h_prev)
+                delta_temp = abs(t_curr - t_prev)
+                delta_hum = abs(h_curr - h_prev)
 
-                    reasons = []
-                    should_turn_on_fan = False
+                reasons = []
+                auto_actions = []
 
-                    if delta_temp >= DELTA_TEMP_THRESHOLD:
-                        reasons.append(f"Nhiệt độ đột biến thay đổi {delta_temp:.1f}°C (từ {t_prev}°C lên {t_curr}°C)")
-                    if delta_hum >= DELTA_HUM_THRESHOLD:
-                        reasons.append(f"Độ ẩm đột biến thay đổi {delta_hum:.1f}%")
-                    if t_curr > MAX_TEMPERATURE:
-                        reasons.append(f"Nhiệt độ vượt ngưỡng nóng nguy hiểm ({t_curr}°C > {MAX_TEMPERATURE}°C)")
-                        should_turn_on_fan = True
-                    elif t_curr < MIN_TEMPERATURE:
-                        reasons.append(f"Nhiệt độ hạ quá thấp ({t_curr}°C < {MIN_TEMPERATURE}°C)")
-                    if s_curr >= MAX_SMELL_LEVEL:
-                        reasons.append(f"Nồng độ mùi / khí amoniac cao nguy hiểm ({s_curr} >= {MAX_SMELL_LEVEL})")
-                        should_turn_on_fan = True
+                if delta_temp >= DELTA_TEMP_THRESHOLD:
+                    reasons.append(f"Nhiệt độ đột biến thay đổi {delta_temp:.1f}°C (từ {t_prev}°C lên {t_curr}°C)")
+                if delta_hum >= DELTA_HUM_THRESHOLD:
+                    reasons.append(f"Độ ẩm đột biến thay đổi {delta_hum:.1f}%")
+                if t_curr > MAX_TEMPERATURE:
+                    reasons.append(f"Nhiệt độ vượt ngưỡng nóng nguy hiểm ({t_curr}°C > {MAX_TEMPERATURE}°C)")
+                    auto_actions.append(("turn_on", "quạt"))
+                elif t_curr < MIN_TEMPERATURE:
+                    reasons.append(f"Nhiệt độ hạ quá thấp ({t_curr}°C < {MIN_TEMPERATURE}°C)")
+                    auto_actions.append(("turn_on", "đèn sưởi"))
+                if h_curr < MIN_HUMIDITY:
+                    reasons.append(f"Độ ẩm quá thấp ({h_curr}% < {MIN_HUMIDITY}%)")
+                    auto_actions.append(("turn_on", "phun sương"))
+                if s_curr >= MAX_SMELL_LEVEL:
+                    reasons.append(f"Nồng độ mùi / khí amoniac cao nguy hiểm ({s_curr} >= {MAX_SMELL_LEVEL})")
+                    auto_actions.append(("turn_on", "quạt"))
 
-                    if reasons:
-                        logger.warning("Bất thường môi trường phát hiện: %s", reasons)
-                        eval_msg = await _evaluate_anomaly_with_gemini(curr, prev, reasons)
+                if reasons:
+                    logger.warning("Bất thường môi trường phát hiện tại %s: %s", pen_id, reasons)
+                    eval_msg = await _evaluate_anomaly_with_gemini(curr, prev, reasons)
 
-                        # Auto-action: Bật quạt thông gió nếu quá nóng hoặc mùi cao
-                        if should_turn_on_fan:
-                            try:
-                                fan_result = control_device(action="turn_on", device_name="quạt", pen_id=pen_id)
-                                logger.info(f"The Watcher auto-triggered fan: {fan_result}")
-                            except Exception as dev_err:
-                                logger.warning(f"Watcher could not activate fan: {dev_err}")
+                    for action, dev_name in dict.fromkeys(auto_actions):
+                        try:
+                            dev_res = control_device(action=action, device_name=dev_name, pen_id=pen_id)
+                            logger.info(f"The Watcher auto-triggered {dev_name} at {pen_id}: {dev_res}")
+                        except Exception as dev_err:
+                            logger.warning(f"Watcher could not activate {dev_name} at {pen_id}: {dev_err}")
 
-                        # Phát và lưu cảnh báo qua MCP Tool
-                        create_system_alert(alert_type="ENV_ANOMALY", message=eval_msg, pen_id=pen_id)
+                    create_system_alert(alert_type="ENV_ANOMALY", message=eval_msg, pen_id=pen_id)
+
+            # Run farm-wide proactive sweep every 8 cycles (~2 minutes)
+            if cycle_count % 8 == 0:
+                await _run_proactive_farm_sweep()
+                has_new_update = True
+            cycle_count += 1
+
+            # Write to `farm_newsfeed_state` & push updated live newsfeed to all clients
+            if has_new_update:
+                try:
+                    state = sync_newsfeed_to_store(limit=12)
+                    await ws_manager.broadcast(
+                        event="newsfeed_update",
+                        data=state,
+                    )
+                except Exception as nf_err:
+                    logger.debug(f"Could not sync/broadcast newsfeed_update: {nf_err}")
 
         except Exception as e:
             logger.error("Error in Watcher loop: %s", str(e))

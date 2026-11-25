@@ -282,6 +282,14 @@ class ChatMessageResponse(BaseModel):
 # ==========================================
 # 11. RAG & DISEASE DIAGNOSIS SCHEMAS
 # ==========================================
+class DiagnosisBase64Request(BaseModel):
+    user_query: Optional[str] = Field(default=None, description="Mô tả triệu chứng hoặc câu hỏi")
+    image_base64: Optional[str] = Field(default=None, description="Ảnh mã hóa Base64 (có thể kèm prefix data:image/...;base64,)")
+    content_type: Optional[str] = Field(default="image/jpeg", description="MIME type của ảnh")
+    user_id: Optional[str] = Field(default="guest", description="ID người dùng để đồng bộ lịch sử chat")
+    pen_id: Optional[str] = Field(default=None, description="Mã chuồng đang thao tác")
+
+
 class DiagnosisResponse(BaseModel):
     category: Optional[str] = Field(default=None, description="Phân loại: livestock hoặc crop")
     species: Optional[str] = Field(default=None, description="Tên loài cây/con")

@@ -1,5 +1,12 @@
 package com.smartfarm.app.ui.screens
 
+import android.graphics.Bitmap
+import android.graphics.BitmapFactory
+import android.net.Uri
+import android.util.Base64
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
@@ -15,13 +22,19 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.smartfarm.app.data.models.ChatMessage
 import com.smartfarm.app.data.models.ToolCall
+import com.smartfarm.app.ui.components.GeminiRichText
 import com.smartfarm.app.ui.theme.*
 import com.smartfarm.app.ui.viewmodel.FarmViewModel
+import java.io.ByteArrayOutputStream
 
 @Composable
 fun AIChatScreen(
@@ -34,6 +47,16 @@ fun AIChatScreen(
     val currentPenId by viewModel.currentPenId.collectAsState()
 
     var inputText by remember { mutableStateOf("") }
+    var selectedImageBase64 by remember { mutableStateOf<String?>(null) }
+    val context = LocalContext.current
+
+    val imagePickerLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.GetContent()
+    ) { uri: Uri? ->
+        if (uri != null) {
+            selectedImageBase64 = encodeUriToBase64(context, uri)
+        }
+    }
 
     val quickQuestions = listOf(
         "Bật quạt thông gió khu $currentPenId",
@@ -111,17 +134,44 @@ fun AIChatScreen(
 
             if (isChatLoading) {
                 item {
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(8.dp),
-                        modifier = Modifier.padding(start = 8.dp)
+                    Surface(
+                        shape = RoundedCornerShape(16.dp),
+                        color = Color.White,
+                        border = androidx.compose.foundation.BorderStroke(1.dp, FarmPrimary.copy(alpha = 0.25f)),
+                        shadowElevation = 1.dp,
+                        modifier = Modifier.fillMaxWidth(0.78f)
                     ) {
-                        CircularProgressIndicator(modifier = Modifier.size(16.dp), color = FarmPrimary, strokeWidth = 2.dp)
-                        Text(
-                            "Trợ lý đang phân tích dữ liệu nông trại và phản hồi...",
-                            fontSize = 11.sp,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
+                        Column(
+                            modifier = Modifier.padding(12.dp),
+                            verticalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(6.dp)
+                            ) {
+                                CircularProgressIndicator(modifier = Modifier.size(14.dp), color = FarmPrimary, strokeWidth = 2.dp)
+                                Text(
+                                    "Trợ lý đang suy nghĩ...",
+                                    fontSize = 11.sp,
+                                    fontWeight = FontWeight.SemiBold,
+                                    color = FarmPrimary
+                                )
+                            }
+                            Box(
+                                modifier = Modifier
+                                    .fillMaxWidth(0.92f)
+                                    .height(8.dp)
+                                    .clip(RoundedCornerShape(4.dp))
+                                    .background(FarmPrimary.copy(alpha = 0.14f))
+                            )
+                            Box(
+                                modifier = Modifier
+                                    .fillMaxWidth(0.72f)
+                                    .height(8.dp)
+                                    .clip(RoundedCornerShape(4.dp))
+                                    .background(FarmPrimary.copy(alpha = 0.10f))
+                            )
+                        }
                     }
                 }
             }
@@ -153,56 +203,165 @@ fun AIChatScreen(
             }
         }
 
-        // Khung nhập câu hỏi
+        // Khung nhập câu hỏi & gửi ảnh RAG
         Surface(
             color = Color.White,
             shadowElevation = 4.dp,
             border = androidx.compose.foundation.BorderStroke(1.dp, FarmCardBorderLight),
             modifier = Modifier.fillMaxWidth()
         ) {
-            Row(
+            Column(
                 modifier = Modifier
                     .fillMaxWidth()
                     .navigationBarsPadding()
-                    .padding(horizontal = 12.dp, vertical = 8.dp),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
             ) {
-                OutlinedTextField(
-                    value = inputText,
-                    onValueChange = { inputText = it },
-                    placeholder = { Text("Nhập câu hỏi (ví dụ: Bật quạt, kiểm tra bệnh)...", fontSize = 12.sp) },
-                    shape = RoundedCornerShape(20.dp),
-                    maxLines = 3,
-                    colors = OutlinedTextFieldDefaults.colors(
-                        focusedContainerColor = Color.White,
-                        unfocusedContainerColor = Color.White,
-                        focusedBorderColor = FarmPrimary,
-                        unfocusedBorderColor = FarmCardBorderLight
-                    ),
-                    modifier = Modifier
-                        .weight(1f)
-                        .heightIn(min = 46.dp)
-                )
-
-                IconButton(
-                    onClick = {
-                        if (inputText.isNotBlank()) {
-                            viewModel.sendChatMessage(inputText.trim())
-                            inputText = ""
+                if (selectedImageBase64 != null) {
+                    val previewBitmap = remember(selectedImageBase64) {
+                        decodeBase64ToBitmap(selectedImageBase64!!)
+                    }
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .background(FarmPrimary.copy(alpha = 0.08f))
+                            .padding(horizontal = 12.dp, vertical = 8.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(10.dp),
+                            modifier = Modifier.weight(1f)
+                        ) {
+                            if (previewBitmap != null) {
+                                Image(
+                                    bitmap = previewBitmap.asImageBitmap(),
+                                    contentDescription = "Ảnh xem trước",
+                                    contentScale = ContentScale.Crop,
+                                    modifier = Modifier
+                                        .size(44.dp)
+                                        .clip(RoundedCornerShape(8.dp))
+                                )
+                            }
+                            Text(
+                                text = "Ảnh đã sẵn sàng gửi kiểm tra bệnh",
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.SemiBold,
+                                color = FarmPrimary
+                            )
                         }
-                    },
+                        IconButton(
+                            onClick = { selectedImageBase64 = null },
+                            modifier = Modifier.size(28.dp)
+                        ) {
+                            Icon(Icons.Default.Close, contentDescription = "Bỏ ảnh", tint = FarmPrimary, modifier = Modifier.size(18.dp))
+                        }
+                    }
+                }
+
+                Row(
                     modifier = Modifier
-                        .size(46.dp)
-                        .clip(CircleShape)
-                        .background(FarmPrimary)
+                        .fillMaxWidth()
+                        .padding(horizontal = 12.dp, vertical = 8.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
-                    Icon(
-                        imageVector = Icons.Default.Send,
-                        contentDescription = "Gửi câu hỏi",
-                        tint = Color.White,
-                        modifier = Modifier.size(20.dp)
+                    IconButton(
+                        onClick = { imagePickerLauncher.launch("image/*") },
+                        modifier = Modifier
+                            .size(40.dp)
+                            .clip(CircleShape)
+                            .background(FarmPrimary.copy(alpha = 0.12f))
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.AddPhotoAlternate,
+                            contentDescription = "Chọn ảnh kiểm tra bệnh",
+                            tint = FarmPrimary,
+                            modifier = Modifier.size(19.dp)
+                        )
+                    }
+
+                    IconButton(
+                        onClick = {
+                            val clipboard = context.getSystemService(android.content.Context.CLIPBOARD_SERVICE) as? android.content.ClipboardManager
+                            val clip = clipboard?.primaryClip
+                            var pastedBase64: String? = null
+                            if (clip != null && clip.itemCount > 0) {
+                                val uri = clip.getItemAt(0).uri
+                                if (uri != null) {
+                                    pastedBase64 = encodeUriToBase64(context, uri)
+                                }
+                            }
+                            if (pastedBase64 != null) {
+                                selectedImageBase64 = pastedBase64
+                            } else {
+                                android.widget.Toast.makeText(
+                                    context,
+                                    "Không tìm thấy ảnh vừa sao chép",
+                                    android.widget.Toast.LENGTH_SHORT
+                                ).show()
+                            }
+                        },
+                        modifier = Modifier
+                            .size(40.dp)
+                            .clip(CircleShape)
+                            .background(FarmPrimary.copy(alpha = 0.12f))
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.ContentPaste,
+                            contentDescription = "Dán ảnh vừa sao chép",
+                            tint = FarmPrimary,
+                            modifier = Modifier.size(18.dp)
+                        )
+                    }
+
+                    OutlinedTextField(
+                        value = inputText,
+                        onValueChange = { inputText = it },
+                        placeholder = {
+                            Text(
+                                if (selectedImageBase64 != null) "Mô tả thêm triệu chứng..." else "Nhập câu hỏi hoặc chọn ảnh gửi...",
+                                fontSize = 12.sp
+                            )
+                        },
+                        shape = RoundedCornerShape(20.dp),
+                        maxLines = 3,
+                        colors = OutlinedTextFieldDefaults.colors(
+                            focusedContainerColor = Color.White,
+                            unfocusedContainerColor = Color.White,
+                            focusedBorderColor = FarmPrimary,
+                            unfocusedBorderColor = FarmCardBorderLight
+                        ),
+                        modifier = Modifier
+                            .weight(1f)
+                            .heightIn(min = 46.dp)
                     )
+
+                    IconButton(
+                        onClick = {
+                            val img = selectedImageBase64
+                            val txt = inputText.trim()
+                            if (img != null) {
+                                viewModel.sendDiagnosisImage(img, txt.ifBlank { null })
+                                selectedImageBase64 = null
+                                inputText = ""
+                            } else if (txt.isNotBlank()) {
+                                viewModel.sendChatMessage(txt)
+                                inputText = ""
+                            }
+                        },
+                        enabled = !isChatLoading && (inputText.isNotBlank() || selectedImageBase64 != null),
+                        modifier = Modifier
+                            .size(46.dp)
+                            .clip(CircleShape)
+                            .background(if (inputText.isNotBlank() || selectedImageBase64 != null) FarmPrimary else FarmPrimary.copy(alpha = 0.4f))
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Send,
+                            contentDescription = "Gửi câu hỏi hoặc ảnh kiểm tra bệnh",
+                            tint = Color.White,
+                            modifier = Modifier.size(20.dp)
+                        )
+                    }
                 }
             }
         }
@@ -246,11 +405,30 @@ fun ChatMessageBubble(message: ChatMessage) {
                 border = if (!isUser) androidx.compose.foundation.BorderStroke(1.dp, FarmCardBorderLight) else null
             ) {
                 Column(modifier = Modifier.padding(12.dp)) {
-                    Text(
+                    if (!message.imageBase64.isNullOrBlank()) {
+                        val msgBitmap = remember(message.imageBase64) {
+                            decodeBase64ToBitmap(message.imageBase64)
+                        }
+                        if (msgBitmap != null) {
+                            Image(
+                                bitmap = msgBitmap.asImageBitmap(),
+                                contentDescription = "Ảnh kiểm chứng",
+                                contentScale = ContentScale.Crop,
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .heightIn(max = 180.dp)
+                                    .clip(RoundedCornerShape(12.dp))
+                            )
+                            Spacer(modifier = Modifier.height(8.dp))
+                        }
+                    }
+
+                    GeminiRichText(
                         text = message.content,
-                        color = if (isUser) Color.White else MaterialTheme.colorScheme.onSurface,
+                        isUser = isUser,
+                        isStreaming = message.isStreaming,
                         fontSize = 13.sp,
-                        lineHeight = 18.sp
+                        lineHeight = 19.sp
                     )
 
                     // Hiển thị tác vụ công cụ tự động nếu có
@@ -305,10 +483,46 @@ fun ToolCallBadge(tool: ToolCall) {
                     Text(
                         text = "Kết quả: ${tool.result}",
                         fontSize = 9.sp,
+                        maxLines = 3,
+                        overflow = TextOverflow.Ellipsis,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                 }
             }
         }
+    }
+}
+
+private fun encodeUriToBase64(context: android.content.Context, uri: Uri): String? {
+    return try {
+        val rawBytes = context.contentResolver.openInputStream(uri)?.use { it.readBytes() } ?: return null
+        val original = BitmapFactory.decodeByteArray(rawBytes, 0, rawBytes.size) ?: return null
+        val maxDim = 1024
+        val scaled = if (original.width > maxDim || original.height > maxDim) {
+            val ratio = minOf(maxDim.toFloat() / original.width, maxDim.toFloat() / original.height)
+            Bitmap.createScaledBitmap(
+                original,
+                (original.width * ratio).toInt().coerceAtLeast(1),
+                (original.height * ratio).toInt().coerceAtLeast(1),
+                true
+            )
+        } else {
+            original
+        }
+        val out = ByteArrayOutputStream()
+        scaled.compress(Bitmap.CompressFormat.JPEG, 85, out)
+        Base64.encodeToString(out.toByteArray(), Base64.NO_WRAP)
+    } catch (_: Exception) {
+        null
+    }
+}
+
+private fun decodeBase64ToBitmap(base64Str: String): Bitmap? {
+    return try {
+        val clean = base64Str.substringAfter("base64,", base64Str)
+        val bytes = Base64.decode(clean, Base64.DEFAULT)
+        BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
+    } catch (_: Exception) {
+        null
     }
 }

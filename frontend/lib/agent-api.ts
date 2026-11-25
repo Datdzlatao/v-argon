@@ -4,24 +4,41 @@ const DEFAULT_BACKEND_URL = 'https://dat-latitude-5590-2.tail2bda46.ts.net:8443'
 const DEFAULT_FACE_API_URL = 'https://dat-latitude-5590-2.tail2bda46.ts.net:10000';
 const DEFAULT_ACTION_API_URL = 'https://dat-latitude-5590-2.tail2bda46.ts.net';
 
-export const BACKEND_URL = (process.env.NEXT_PUBLIC_API_URL || DEFAULT_BACKEND_URL).replace(/\/+$/, '');
-export const FACE_API_URL = (process.env.NEXT_PUBLIC_FACE_API_URL || DEFAULT_FACE_API_URL).replace(/\/+$/, '');
-export const FACE_WS_URL = process.env.NEXT_PUBLIC_FACE_WS_URL || (
-  FACE_API_URL.startsWith('https://')
-    ? FACE_API_URL.replace(/^https:\/\//i, 'wss://')
-    : FACE_API_URL.replace(/^http:\/\//i, 'ws://')
+const isLocalBrowser =
+  typeof window !== 'undefined' &&
+  (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1');
+
+export const BACKEND_URL = (
+  isLocalBrowser ? 'http://localhost:8000' : (process.env.NEXT_PUBLIC_API_URL || DEFAULT_BACKEND_URL)
+).replace(/\/+$/, '');
+export const FACE_API_URL = (
+  isLocalBrowser ? 'http://localhost:8001' : (process.env.NEXT_PUBLIC_FACE_API_URL || DEFAULT_FACE_API_URL)
+).replace(/\/+$/, '');
+export const FACE_WS_URL = (
+  isLocalBrowser
+    ? 'ws://localhost:8001'
+    : process.env.NEXT_PUBLIC_FACE_WS_URL ||
+      (FACE_API_URL.startsWith('https://')
+        ? FACE_API_URL.replace(/^https:\/\//i, 'wss://')
+        : FACE_API_URL.replace(/^http:\/\//i, 'ws://'))
 );
-export const ACTION_API_URL = (process.env.NEXT_PUBLIC_ACTION_API_URL || DEFAULT_ACTION_API_URL).replace(/\/+$/, '');
-export const ACTION_WS_URL = process.env.NEXT_PUBLIC_ACTION_WS_URL || (
-  ACTION_API_URL.startsWith('https://')
-    ? ACTION_API_URL.replace(/^https:\/\//i, 'wss://')
-    : ACTION_API_URL.replace(/^http:\/\//i, 'ws://')
+export const ACTION_API_URL = (
+  isLocalBrowser ? 'http://localhost:8002' : (process.env.NEXT_PUBLIC_ACTION_API_URL || DEFAULT_ACTION_API_URL)
+).replace(/\/+$/, '');
+export const ACTION_WS_URL = (
+  isLocalBrowser
+    ? 'ws://localhost:8002'
+    : process.env.NEXT_PUBLIC_ACTION_WS_URL ||
+      (ACTION_API_URL.startsWith('https://')
+        ? ACTION_API_URL.replace(/^https:\/\//i, 'wss://')
+        : ACTION_API_URL.replace(/^http:\/\//i, 'ws://'))
 );
-export const WS_URL = process.env.NEXT_PUBLIC_WS_URL || (
-  BACKEND_URL.startsWith('https://')
-    ? BACKEND_URL.replace(/^https:\/\//i, 'wss://') + '/ws'
-    : BACKEND_URL.replace(/^http:\/\//i, 'ws://') + '/ws'
-);
+export const WS_URL = isLocalBrowser
+  ? 'ws://localhost:8000/ws'
+  : process.env.NEXT_PUBLIC_WS_URL ||
+    (BACKEND_URL.startsWith('https://')
+      ? BACKEND_URL.replace(/^https:\/\//i, 'wss://') + '/ws'
+      : BACKEND_URL.replace(/^http:\/\//i, 'ws://') + '/ws');
 
 export function getActionVideoStreamWsUrl(
   targetId: string = 'DEFAULT',
@@ -77,6 +94,231 @@ export async function sendAgentChat(
   if (!res.ok) {
     const errorText = await res.text();
     throw new Error(`Agent API Error (${res.status}): ${errorText}`);
+  }
+
+  return await res.json();
+}
+
+export async function sendAgentChatStream(
+  message: string,
+  penId: string | undefined,
+  userId: string | undefined,
+  callbacks: {
+    onStatus?: (text: string) => void;
+    onChunk: (delta: string) => void;
+    onDone?: (fullReply: string, toolCalls: any[]) => void;
+  }
+): Promise<void> {
+  let res: Response;
+  try {
+    res = await fetch(`${BACKEND_URL}/api/chat/stream`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        message,
+        pen_id: penId,
+        user_id: userId || 'guest',
+      }),
+    });
+  } catch {
+    const fallback = await sendAgentChat(message, penId, userId);
+    callbacks.onChunk(fallback.reply || 'Đã thực hiện xong yêu cầu.');
+    callbacks.onDone?.(fallback.reply || '', fallback.tool_calls || []);
+    return;
+  }
+
+  if (!res.ok || !res.body) {
+    const fallback = await sendAgentChat(message, penId, userId);
+    callbacks.onChunk(fallback.reply || 'Đã thực hiện xong yêu cầu.');
+    callbacks.onDone?.(fallback.reply || '', fallback.tool_calls || []);
+    return;
+  }
+
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder('utf-8');
+  let buffer = '';
+  let fullReply = '';
+  let finalTools: any[] = [];
+  let doneCalled = false;
+
+  const processLine = (rawLine: string) => {
+    const trimmed = rawLine.trim();
+    if (!trimmed.startsWith('data:')) return;
+    const jsonStr = trimmed.slice(5).trim();
+    if (!jsonStr) return;
+    try {
+      const evt = JSON.parse(jsonStr);
+      if (evt.type === 'status' && evt.text) {
+        callbacks.onStatus?.(evt.text);
+      } else if (evt.type === 'chunk' && evt.text) {
+        fullReply += evt.text;
+        callbacks.onChunk(evt.text);
+      } else if (evt.type === 'done') {
+        fullReply = evt.reply || fullReply;
+        finalTools = evt.tool_calls || [];
+        doneCalled = true;
+        callbacks.onDone?.(fullReply, finalTools);
+      } else if (evt.type === 'error') {
+        throw new Error(evt.detail || 'Stream error');
+      }
+    } catch (e) {
+      if (e instanceof SyntaxError) return;
+      throw e;
+    }
+  };
+
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+
+    const lines = buffer.split('\n');
+    buffer = lines.pop() || '';
+    for (const line of lines) {
+      processLine(line);
+    }
+  }
+
+  if (buffer.trim()) {
+    processLine(buffer);
+  }
+
+  if (!doneCalled) {
+    if (!fullReply) {
+      const fallback = await sendAgentChat(message, penId, userId);
+      fullReply = fallback.reply || 'Đã thực hiện xong yêu cầu.';
+      finalTools = fallback.tool_calls || [];
+      callbacks.onChunk(fullReply);
+    }
+    callbacks.onDone?.(fullReply, finalTools);
+  }
+}
+
+export interface DiagnosisResponse {
+  category?: string;
+  species?: string;
+  disease_name?: string;
+  text: string;
+  answer: string;
+  sources?: string[];
+  timestamp?: string;
+}
+
+export function fileToBase64(
+  file: File
+): Promise<{ base64: string; contentType: string; dataUrl: string }> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      const dataUrl = String(reader.result || '');
+      const commaIdx = dataUrl.indexOf(',');
+      const base64 = commaIdx >= 0 ? dataUrl.slice(commaIdx + 1) : dataUrl;
+      resolve({
+        base64,
+        contentType: file.type || 'image/jpeg',
+        dataUrl,
+      });
+    };
+    reader.onerror = () => reject(new Error('Không thể đọc file ảnh'));
+    reader.readAsDataURL(file);
+  });
+}
+
+/**
+ * Send Base64 image + optional query to RAG Diagnosis API (/api/diagnose/base64)
+ */
+export interface NewsfeedItem {
+  id: string;
+  title: string;
+  summary: string;
+  category: string;
+  severity: 'critical' | 'warning' | 'info';
+  pen_id?: string;
+  target_type?: string | null;
+  target_id?: string | null;
+  timestamp: string;
+  action_label: string;
+  action_route: string;
+  is_resolved?: boolean;
+  quick_api?: {
+    method: string;
+    endpoint: string;
+    body: Record<string, any>;
+  } | null;
+}
+
+export interface NewsfeedState {
+  summary_text: string;
+  briefing_text?: string | null;
+  pending_tasks_count: number;
+  low_stock_count: number;
+  sick_animals_count: number;
+  updated_at?: string;
+  items: NewsfeedItem[];
+}
+
+export async function fetchNewsfeedState(penId?: string, limit: number = 12): Promise<NewsfeedState | null> {
+  try {
+    const url = new URL(`${BACKEND_URL}/api/newsfeed`);
+    if (penId && penId !== 'all') url.searchParams.append('pen_id', penId);
+    url.searchParams.append('limit', String(limit));
+    const res = await fetch(url.toString(), { cache: 'no-store' });
+    if (!res.ok) return null;
+    const data = await res.json();
+    return {
+      summary_text: data.summary_text || '',
+      briefing_text: data.briefing_text ?? null,
+      pending_tasks_count: Number(data.pending_tasks_count ?? 0),
+      low_stock_count: Number(data.low_stock_count ?? 0),
+      sick_animals_count: Number(data.sick_animals_count ?? 0),
+      updated_at: data.updated_at,
+      items: data.items || [],
+    };
+  } catch {
+    return null;
+  }
+}
+
+export async function fetchNewsfeed(penId?: string, limit: number = 10): Promise<NewsfeedItem[]> {
+  const state = await fetchNewsfeedState(penId, limit);
+  return state?.items || [];
+}
+
+export async function executeNewsfeedQuickApi(
+  endpoint: string,
+  body: Record<string, any>
+): Promise<any> {
+  const res = await fetch(`${BACKEND_URL}${endpoint}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) throw new Error(`Quick action error (${res.status})`);
+  return await res.json();
+}
+
+export async function diagnoseDiseaseWithBase64(
+  imageBase64?: string,
+  userQuery?: string,
+  contentType: string = 'image/jpeg',
+  penId?: string,
+  userId?: string
+): Promise<DiagnosisResponse> {
+  const res = await fetch(`${BACKEND_URL}/api/diagnose/base64`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      user_query: userQuery || undefined,
+      image_base64: imageBase64 || undefined,
+      content_type: contentType,
+      pen_id: penId || undefined,
+      user_id: userId || 'guest',
+    }),
+  });
+
+  if (!res.ok) {
+    const errorText = await res.text();
+    throw new Error(`RAG Diagnosis Error (${res.status}): ${errorText}`);
   }
 
   return await res.json();

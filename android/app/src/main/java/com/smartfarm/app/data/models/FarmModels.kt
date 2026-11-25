@@ -211,6 +211,32 @@ data class DailyBriefing(
     val timestamp: String = "07:00 Hôm nay"
 )
 
+data class NewsfeedItem(
+    val id: String,
+    val title: String,
+    val summary: String,
+    val category: String = "info",
+    val severity: String = "info", // "critical" | "warning" | "info"
+    val penId: String? = null,
+    val targetType: String? = null,
+    val targetId: String? = null,
+    val timestamp: String = "",
+    val actionLabel: String = "Xử lý ngay",
+    val actionRoute: String = "chat",
+    val isResolved: Boolean = false,
+    val quickDeviceType: String? = null,
+    val quickDeviceState: Boolean = true
+)
+
+data class NewsfeedState(
+    val summaryText: String = "",
+    val briefingText: String? = null,
+    val pendingTasksCount: Int = 0,
+    val lowStockCount: Int = 0,
+    val sickAnimalsCount: Int = 0,
+    val items: List<NewsfeedItem> = emptyList()
+)
+
 data class ToolCall(
     val tool: String,
     val args: Map<String, Any?> = emptyMap(),
@@ -222,7 +248,9 @@ data class ChatMessage(
     val sender: String, // "user" | "agent"
     val content: String,
     val time: String,
-    val toolCalls: List<ToolCall>? = null
+    val toolCalls: List<ToolCall>? = null,
+    val imageBase64: String? = null,
+    val isStreaming: Boolean = false
 )
 
 data class UserSession(

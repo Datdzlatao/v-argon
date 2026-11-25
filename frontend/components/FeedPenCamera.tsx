@@ -245,7 +245,7 @@ export default function FeedPenCamera({
             }`}
           >
             <Smartphone className="w-3.5 h-3.5 text-blue-600" />
-            <span>📱 IP Cam Điện Thoại</span>
+            <span>📱 Máy quay điện thoại</span>
           </button>
 
           <button
@@ -257,7 +257,7 @@ export default function FeedPenCamera({
             }`}
           >
             <Laptop className="w-3.5 h-3.5 text-purple-600" />
-            <span>💻 Webcam Máy Tính</span>
+            <span>💻 Máy quay máy tính</span>
           </button>
 
           <button
@@ -436,7 +436,7 @@ export default function FeedPenCamera({
               rel="noreferrer"
               className="text-emerald-700 font-semibold flex items-center gap-1 hover:underline"
             >
-              <span>Dashboard Test</span>
+              <span>Kiểm tra máy quay</span>
               <ExternalLink className="w-3 h-3" />
             </a>
           </div>

@@ -181,13 +181,13 @@ fun CameraActionScreen(
                     FilterChip(
                         selected = streamDisplayMode == "ipcam",
                         onClick = { streamDisplayMode = "ipcam" },
-                        label = { Text("📱 IP Cam", fontSize = 11.sp, fontWeight = FontWeight.Bold) },
+                        label = { Text("📱 Máy quay ĐT", fontSize = 11.sp, fontWeight = FontWeight.Bold) },
                         modifier = Modifier.weight(1f)
                     )
                     FilterChip(
                         selected = streamDisplayMode == "webcam",
                         onClick = { streamDisplayMode = "webcam" },
-                        label = { Text("💻 Webcam", fontSize = 11.sp, fontWeight = FontWeight.Bold) },
+                        label = { Text("💻 Máy quay MT", fontSize = 11.sp, fontWeight = FontWeight.Bold) },
                         modifier = Modifier.weight(1f)
                     )
                     FilterChip(
@@ -227,7 +227,7 @@ fun CameraActionScreen(
                                             modifier = Modifier.padding(6.dp).align(Alignment.TopStart)
                                         ) {
                                             Text(
-                                                text = "📱 Luồng 1: IP Cam Điện Thoại",
+                                                text = "📱 Luồng 1: Máy quay điện thoại",
                                                 color = Color.White,
                                                 fontSize = 9.sp,
                                                 fontWeight = FontWeight.Bold,
@@ -250,7 +250,7 @@ fun CameraActionScreen(
                                             modifier = Modifier.padding(6.dp).align(Alignment.TopStart)
                                         ) {
                                             Text(
-                                                text = "💻 Luồng 2: Webcam Máy Tính",
+                                                text = "💻 Luồng 2: Máy quay máy tính",
                                                 color = Color.White,
                                                 fontSize = 9.sp,
                                                 fontWeight = FontWeight.Bold,

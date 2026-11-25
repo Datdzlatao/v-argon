@@ -1,4 +1,5 @@
 import asyncio
+import base64
 import json
 import logging
 import time
@@ -42,6 +43,7 @@ from app.models.schemas import (
     FeedLogCreate,
     PenCreate,
     PenUpdate,
+    DiagnosisBase64Request,
     DiagnosisResponse,
     KnowledgeSearchRequest,
     KnowledgeSearchResponse,
@@ -247,6 +249,7 @@ async def control_device_api(payload: DeviceControlRequest):
             is_active=is_active,
         )
         await ws_manager.broadcast("device_update", updated)
+        await _broadcast_newsfeed_update()
         return {"status": "success", "device": updated}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
@@ -271,6 +274,7 @@ async def update_health_api(payload: AnimalHealthUpdate):
             health_type=payload.type or "Disease",
         )
         await ws_manager.broadcast("animal_update", result)
+        await _broadcast_newsfeed_update()
         return {"status": "success", "data": result}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
@@ -461,6 +465,89 @@ async def get_alerts(limit: int = Query(default=20, ge=1, le=100)):
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@app.get("/api/newsfeed", tags=["Newsfeed & Observer"])
+async def get_live_newsfeed(
+    pen_id: Optional[str] = Query(default=None, description="Lọc theo mã chuồng"),
+    limit: int = Query(default=12, ge=1, le=30),
+):
+    """
+    Live Observer News Feed Endpoint:
+    Reads the synchronized `farm_newsfeed_state` (summary_text, briefing_text, counts, items)
+    from Supabase/SQLite so all polling clients stay 100% in sync.
+    """
+    try:
+        from app.db.repositories.newsfeed import NewsfeedRepository
+        from app.background.newsfeed_service import sync_newsfeed_to_store
+
+        state = NewsfeedRepository().get_state("global")
+        if not state:
+            state = sync_newsfeed_to_store(limit=limit)
+
+        items = state.get("items") or []
+        if pen_id and pen_id != "all":
+            items = [i for i in items if str(i.get("pen_id") or "") == str(pen_id)]
+        items = items[:limit]
+
+        return {
+            "status": "success",
+            "id": state.get("id", "global"),
+            "summary_text": state.get("summary_text", ""),
+            "briefing_text": state.get("briefing_text"),
+            "pending_tasks_count": state.get("pending_tasks_count", 0),
+            "low_stock_count": state.get("low_stock_count", 0),
+            "sick_animals_count": state.get("sick_animals_count", 0),
+            "updated_at": state.get("updated_at"),
+            "count": len(items),
+            "items": items,
+        }
+    except Exception as e:
+        logger.error(f"Newsfeed API error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/newsfeed/refresh", tags=["Newsfeed & Observer"])
+async def refresh_live_newsfeed():
+    """Force recompute and persist `farm_newsfeed_state`."""
+    try:
+        from app.background.newsfeed_service import sync_newsfeed_to_store
+        state = sync_newsfeed_to_store(limit=12)
+        await ws_manager.broadcast("newsfeed_update", state)
+        return {"status": "success", **state, "count": len(state.get("items") or [])}
+    except Exception as e:
+        logger.error(f"Newsfeed refresh error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+async def _broadcast_newsfeed_update():
+    try:
+        from app.background.newsfeed_service import sync_newsfeed_to_store
+        state = sync_newsfeed_to_store(limit=12)
+        await ws_manager.broadcast("newsfeed_update", state)
+    except Exception as nf_err:
+        logger.debug(f"Could not sync/broadcast newsfeed_update: {nf_err}")
+
+
+async def _save_and_broadcast_chat(
+    user_id: str,
+    pen_id: Optional[str],
+    sender: str,
+    content: str,
+    tool_calls: Optional[list[dict[str, Any]]] = None,
+) -> dict[str, Any]:
+    saved = chat_history_repo.save_message(
+        user_id=user_id,
+        sender=sender,
+        content=content,
+        pen_id=pen_id,
+        tool_calls=tool_calls,
+    )
+    try:
+        await ws_manager.broadcast(event="chat_message", data=saved)
+    except Exception as ws_err:
+        logger.warning(f"Failed to broadcast chat_message: {ws_err}")
+    return saved
+
+
 @app.post("/api/chat", response_model=AgentChatResponse, tags=["AI Agent"])
 async def chat_with_agent(payload: AgentChatRequest):
     """
@@ -474,23 +561,23 @@ async def chat_with_agent(payload: AgentChatRequest):
         # 1. Fetch recent history for conversational context
         history = chat_history_repo.get_history(user_id=user_id, pen_id=pen_id, limit=10)
 
-        # 2. Save user message to chat history
-        chat_history_repo.save_message(
+        # 2. Save user message & broadcast
+        await _save_and_broadcast_chat(
             user_id=user_id,
+            pen_id=pen_id,
             sender="user",
             content=payload.message,
-            pen_id=pen_id,
         )
 
         # 3. Call AI Agent with context
         result = await agent_service.chat(payload.message, history=history)
 
-        # 4. Save agent reply & tool calls
-        chat_history_repo.save_message(
+        # 4. Save agent reply & broadcast
+        await _save_and_broadcast_chat(
             user_id=user_id,
+            pen_id=pen_id,
             sender="agent",
             content=result["reply"],
-            pen_id=pen_id,
             tool_calls=result.get("tool_calls", []),
         )
 
@@ -501,6 +588,59 @@ async def chat_with_agent(payload: AgentChatRequest):
     except Exception as e:
         logger.error(f"Chat API error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/chat/stream", tags=["AI Agent"])
+async def chat_with_agent_stream(payload: AgentChatRequest):
+    """
+    Streaming SSE Chat endpoint with AI Agent (Gemini Streaming + Live MCP Context).
+    Emits JSON SSE lines: {"type": "status"|"chunk"|"done", ...}
+    """
+    user_id = payload.user_id or "guest"
+    pen_id = payload.pen_id
+    history = chat_history_repo.get_history(user_id=user_id, pen_id=pen_id, limit=10)
+
+    await _save_and_broadcast_chat(
+        user_id=user_id,
+        pen_id=pen_id,
+        sender="user",
+        content=payload.message,
+    )
+
+    async def event_generator():
+        final_reply = ""
+        final_tools = []
+        try:
+            async for event in agent_service.chat_stream(payload.message, history=history):
+                if event.get("type") == "done":
+                    final_reply = event.get("reply", "")
+                    final_tools = event.get("tool_calls", [])
+                yield f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
+        except Exception as e:
+            logger.error(f"Chat stream error: {e}")
+            yield f"data: {json.dumps({'type': 'error', 'detail': str(e)}, ensure_ascii=False)}\n\n"
+        finally:
+            if final_reply:
+                try:
+                    await _save_and_broadcast_chat(
+                        user_id=user_id,
+                        pen_id=pen_id,
+                        sender="agent",
+                        content=final_reply,
+                        tool_calls=final_tools,
+                    )
+                except Exception as save_err:
+                    logger.warning(f"Could not save streamed agent reply: {save_err}")
+
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
 
 
 @app.get("/api/chat/history", tags=["AI Agent"])
@@ -566,6 +706,96 @@ async def diagnose_disease_api(
         )
     except Exception as e:
         logger.error(f"Diagnosis API error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+def _decode_base64_image(image_base64: Optional[str], default_mime: str = "image/jpeg") -> tuple[Optional[bytes], str]:
+    """Decode raw base64 or data URL into image bytes and MIME type."""
+    if not image_base64 or not image_base64.strip():
+        return None, default_mime
+
+    raw = image_base64.strip()
+    mime_type = default_mime or "image/jpeg"
+    if raw.startswith("data:") and ";base64," in raw:
+        header, b64_payload = raw.split(";base64,", 1)
+        extracted_mime = header[5:].strip()
+        if extracted_mime:
+            mime_type = extracted_mime
+        raw = b64_payload
+
+    try:
+        return base64.b64decode(raw, validate=True), mime_type
+    except Exception:
+        # Fallback for non-strict padding/whitespace
+        try:
+            return base64.b64decode(raw), mime_type
+        except Exception as exc:
+            raise HTTPException(status_code=400, detail=f"Ảnh Base64 không hợp lệ: {exc}")
+
+
+@app.post("/api/diagnose/base64", response_model=DiagnosisResponse, tags=["RAG & Diagnosis"])
+async def diagnose_disease_base64_api(payload: DiagnosisBase64Request):
+    """
+    RAG Agricultural Disease Diagnosis Endpoint (JSON + Base64 Image):
+    - Accepts user_query and base64-encoded image from Web, iOS PWA, and Android clients.
+    - Passes decoded image bytes to Multimodal Gemini + Pinecone RAG Pipeline.
+    - Persists both user image diagnosis request and RAG response into chat_history & broadcasts over WebSocket.
+    """
+    try:
+        image_bytes, content_type = _decode_base64_image(
+            payload.image_base64,
+            payload.content_type or "image/jpeg",
+        )
+        result = await agent_service.diagnose_multimodal(
+            user_query=payload.user_query,
+            image_bytes=image_bytes,
+            content_type=content_type,
+        )
+        diag_resp = DiagnosisResponse(
+            category=result.get("category"),
+            species=result.get("species"),
+            disease_name=result.get("disease_name"),
+            text=result.get("text", payload.user_query or "Chẩn đoán bệnh hình ảnh"),
+            answer=result.get("answer", "Chưa có thông tin phác đồ điều trị."),
+            sources=result.get("sources", []),
+        )
+
+        # Save into chat history & broadcast to sync across Web/iOS/Android
+        user_id = payload.user_id or "guest"
+        pen_id = payload.pen_id
+        user_msg_text = f"📷 [Ảnh kiểm chứng RAG] {payload.user_query.strip()}" if payload.user_query and payload.user_query.strip() else "📷 [Ảnh kiểm chứng & phân tích RAG]"
+        await _save_and_broadcast_chat(
+            user_id=user_id,
+            pen_id=pen_id,
+            sender="user",
+            content=user_msg_text,
+        )
+        formatted_reply = "\n".join(
+            part for part in [
+                f"🩺 Chẩn đoán: {diag_resp.disease_name}" if diag_resp.disease_name else None,
+                f"🌿/🐖 Đối tượng: {diag_resp.species} ({'Cây trồng' if diag_resp.category == 'crop' else 'Vật nuôi'})" if diag_resp.species else None,
+                f"🔍 Mô tả: {diag_resp.text}" if diag_resp.text else None,
+                f"\n📋 Phác đồ RAG:\n{diag_resp.answer}",
+                f"\n📚 Nguồn: {', '.join(diag_resp.sources)}" if diag_resp.sources else None,
+            ] if part
+        )
+        await _save_and_broadcast_chat(
+            user_id=user_id,
+            pen_id=pen_id,
+            sender="agent",
+            content=formatted_reply,
+            tool_calls=[{
+                "tool": "diagnose_agricultural_disease",
+                "args": {"content_type": content_type},
+                "result": diag_resp.disease_name or "Đã phân tích ảnh qua RAG",
+            }],
+        )
+
+        return diag_resp
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Diagnosis Base64 API error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 

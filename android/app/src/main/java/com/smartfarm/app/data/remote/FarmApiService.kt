@@ -14,6 +14,17 @@ interface FarmApiService {
         @Body body: Map<String, @JvmSuppressWildcards Any>
     ): Response<JsonObject>
 
+    @Streaming
+    @POST("/api/chat/stream")
+    suspend fun sendChatStream(
+        @Body body: Map<String, @JvmSuppressWildcards Any>
+    ): Response<ResponseBody>
+
+    @POST("/api/diagnose/base64")
+    suspend fun diagnoseDiseaseBase64(
+        @Body body: Map<String, @JvmSuppressWildcards Any>
+    ): Response<JsonObject>
+
     @GET("/api/chat/history")
     suspend fun getChatHistory(
         @Query("user_id") userId: String,
@@ -22,6 +33,12 @@ interface FarmApiService {
 
     @POST("/api/scheduler/trigger-briefing")
     suspend fun triggerBriefing(): Response<JsonObject>
+
+    @GET("/api/newsfeed")
+    suspend fun getNewsfeed(
+        @Query("pen_id") penId: String? = null,
+        @Query("limit") limit: Int = 12
+    ): Response<JsonObject>
 
     @POST("/api/devices/control")
     suspend fun controlDevice(

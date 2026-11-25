@@ -73,6 +73,11 @@ class FarmViewModel(
     val dailyBriefing: StateFlow<DailyBriefing?> = _dailyBriefing.asStateFlow()
     val isBriefingLoading = MutableStateFlow(false)
 
+    // Live Observer Newsfeed
+    private val _newsfeedItems = MutableStateFlow<List<NewsfeedItem>>(emptyList())
+    val newsfeedItems: StateFlow<List<NewsfeedItem>> = _newsfeedItems.asStateFlow()
+    val isNewsfeedLoading = MutableStateFlow(false)
+
     // Chat Assistant
     private val _chatMessages = MutableStateFlow<List<ChatMessage>>(
         listOf(
@@ -156,12 +161,22 @@ class FarmViewModel(
                 when (packet.event) {
                     "device_update" -> {
                         loadPenDetails(_currentPenId.value)
+                        loadNewsfeed(null)
                         showToast("Thiết bị vừa được cập nhật từ hệ thống")
                     }
                     "alert" -> {
                         val msg = packet.data?.get("message")?.asString ?: "Cảnh báo môi trường mới!"
                         _activeAlerts.value = listOf(msg)
                         showToast("⚠️ $msg")
+                        loadNewsfeed(null)
+                    }
+                    "newsfeed_update" -> {
+                        val arr = packet.data?.getAsJsonArray("items")
+                        if (arr != null) {
+                            _newsfeedItems.value = repository.parseNewsfeedArray(arr)
+                        } else {
+                            loadNewsfeed(null)
+                        }
                     }
                     "briefing" -> {
                         val content = packet.data?.get("content")?.asString
@@ -179,6 +194,29 @@ class FarmViewModel(
                     "animal_transfer" -> {
                         loadPenDetails(_currentPenId.value)
                         showToast("Vật nuôi đã được chuyển chuồng thành công")
+                    }
+                    "chat_message" -> {
+                        val d = packet.data ?: return@collect
+                        val msgUserId = d.get("user_id")?.takeIf { !it.isJsonNull }?.asString ?: "guest"
+                        val currentUid = _userSession.value?.userId ?: "guest"
+                        val msgPenId = d.get("pen_id")?.takeIf { !it.isJsonNull }?.asString
+                        val curPen = _currentPenId.value
+                        if (msgUserId == currentUid && (msgPenId == null || curPen.isBlank() || msgPenId == curPen)) {
+                            val msgId = d.get("id")?.takeIf { !it.isJsonNull }?.asString ?: UUID.randomUUID().toString()
+                            val sender = d.get("sender")?.takeIf { !it.isJsonNull }?.asString ?: "agent"
+                            val content = d.get("content")?.takeIf { !it.isJsonNull }?.asString ?: ""
+                            val alreadyExists = _chatMessages.value.any {
+                                it.id == msgId || (it.sender == sender && it.content == content)
+                            }
+                            if (!alreadyExists && content.isNotBlank()) {
+                                _chatMessages.value = _chatMessages.value + ChatMessage(
+                                    id = msgId,
+                                    sender = sender,
+                                    content = content,
+                                    time = "Vừa xong"
+                                )
+                            }
+                        }
                     }
                 }
             }
@@ -230,8 +268,19 @@ class FarmViewModel(
                         }
                     }
 
-                    // 2. Cứ mỗi 6 giây (counter % 2 == 0), cập nhật Vật nuôi/Cây trồng, Kho & Phân khu
+                    // 2. Cứ mỗi 6 giây (counter % 2 == 0), cập nhật Vật nuôi/Cây trồng, Kho & Phân khu + Polling Newsfeed
                     if (counter % 2 == 0) {
+                        repository.getNewsfeedState(null, 12)?.let { state ->
+                            _newsfeedItems.value = state.items
+                            if (state.summaryText.isNotBlank()) {
+                                _dailyBriefing.value = DailyBriefing(
+                                    content = state.summaryText,
+                                    pendingTasksCount = state.pendingTasksCount,
+                                    lowStockCount = state.lowStockCount,
+                                    sickAnimalsCount = state.sickAnimalsCount
+                                )
+                            }
+                        }
                         if (penId.isNotEmpty()) {
                             if (_currentMode.value == "livestock") {
                                 val updatedAnimals = repository.getAnimals(penId)
@@ -312,8 +361,54 @@ class FarmViewModel(
     fun selectPen(penId: String) {
         _currentPenId.value = penId
         loadPenDetails(penId)
+        loadChatHistory(penId)
+        loadNewsfeed(null)
         if (penId.isNotBlank() && penId != "all") {
             startTelemetryPolling(penId)
+        }
+    }
+
+    fun loadNewsfeed(penId: String? = _currentPenId.value) {
+        viewModelScope.launch {
+            isNewsfeedLoading.value = true
+            val state = repository.getNewsfeedState(penId = penId, limit = 12)
+            if (state != null) {
+                _newsfeedItems.value = state.items
+                if (state.summaryText.isNotBlank()) {
+                    _dailyBriefing.value = DailyBriefing(
+                        content = state.summaryText,
+                        pendingTasksCount = state.pendingTasksCount,
+                        lowStockCount = state.lowStockCount,
+                        sickAnimalsCount = state.sickAnimalsCount
+                    )
+                }
+            }
+            isNewsfeedLoading.value = false
+        }
+    }
+
+    fun executeNewsfeedQuickDevice(item: NewsfeedItem) {
+        val devType = item.quickDeviceType ?: return
+        val targetPen = item.penId ?: _currentPenId.value.ifBlank { "123" }
+        viewModelScope.launch {
+            val ok = repository.controlDeviceByName(devType, item.quickDeviceState, targetPen)
+            if (ok) {
+                showToast("✅ Đã xử lý nhanh: ${item.actionLabel}")
+                loadPenDetails(targetPen)
+                loadNewsfeed(_currentPenId.value)
+            } else {
+                showToast("⚠️ Không thể điều khiển thiết bị $devType")
+            }
+        }
+    }
+
+    fun loadChatHistory(penId: String = _currentPenId.value) {
+        viewModelScope.launch {
+            val uid = _userSession.value?.userId ?: "guest"
+            val history = repository.getChatHistory(uid, penId)
+            if (history.isNotEmpty()) {
+                _chatMessages.value = history
+            }
         }
     }
 
@@ -568,9 +663,80 @@ class FarmViewModel(
         )
         _chatMessages.value = _chatMessages.value + userMsg
 
+        val streamMsgId = UUID.randomUUID().toString()
         viewModelScope.launch {
             isChatLoading.value = true
-            val agentReply = repository.sendChat(text, _currentPenId.value, _userSession.value?.userId ?: "guest")
+            var msgAdded = false
+            var accumulated = ""
+            repository.sendChatStream(
+                message = text,
+                penId = _currentPenId.value,
+                userId = _userSession.value?.userId ?: "guest",
+                onChunk = { delta ->
+                    accumulated += delta
+                    if (!msgAdded) {
+                        msgAdded = true
+                        isChatLoading.value = false
+                        _chatMessages.value = _chatMessages.value + ChatMessage(
+                            id = streamMsgId,
+                            sender = "agent",
+                            content = accumulated,
+                            time = "Vừa xong",
+                            isStreaming = true
+                        )
+                    } else {
+                        _chatMessages.value = _chatMessages.value.map {
+                            if (it.id == streamMsgId) it.copy(content = accumulated) else it
+                        }
+                    }
+                },
+                onDone = { fullReply, tools ->
+                    isChatLoading.value = false
+                    val finalText = fullReply.ifBlank { accumulated }.ifBlank { "Đã xử lý." }
+                    if (!msgAdded) {
+                        msgAdded = true
+                        _chatMessages.value = _chatMessages.value + ChatMessage(
+                            id = streamMsgId,
+                            sender = "agent",
+                            content = finalText,
+                            time = "Vừa xong",
+                            toolCalls = tools,
+                            isStreaming = false
+                        )
+                    } else {
+                        _chatMessages.value = _chatMessages.value.map {
+                            if (it.id == streamMsgId) {
+                                it.copy(content = finalText, toolCalls = tools, isStreaming = false)
+                            } else it
+                        }
+                    }
+                }
+            )
+            isChatLoading.value = false
+        }
+    }
+
+    fun sendDiagnosisImage(imageBase64: String, query: String? = null, contentType: String = "image/jpeg") {
+        if (imageBase64.isBlank()) return
+        val displayContent = if (!query.isNullOrBlank()) query else "📷 Gửi ảnh kiểm chứng & phân tích RAG"
+        val userMsg = ChatMessage(
+            id = UUID.randomUUID().toString(),
+            sender = "user",
+            content = displayContent,
+            time = "Vừa xong",
+            imageBase64 = imageBase64
+        )
+        _chatMessages.value = _chatMessages.value + userMsg
+
+        viewModelScope.launch {
+            isChatLoading.value = true
+            val agentReply = repository.diagnoseDiseaseBase64(
+                imageBase64 = imageBase64,
+                userQuery = query ?: "Phân tích và chẩn đoán hình ảnh nông nghiệp này giúp tôi",
+                contentType = contentType,
+                userId = _userSession.value?.userId ?: "guest",
+                penId = _currentPenId.value
+            )
             _chatMessages.value = _chatMessages.value + agentReply
             isChatLoading.value = false
         }
@@ -647,7 +813,10 @@ class FarmViewModel(
             }
             repository.updatePenCameras(penId, cleanIp, cleanWebcam)
             if (cleanIp.isNotBlank()) {
-                repository.configurePenCamera(penId, cleanIp)
+                repository.configureCameraStream(penId, cleanIp, "ipcam")
+            }
+            if (cleanWebcam.isNotBlank()) {
+                repository.configureCameraStream(penId, cleanWebcam, "webcam")
             }
             loadPens()
             loadPenDetails(penId)

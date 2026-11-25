@@ -115,7 +115,14 @@ async def run_morning_briefing() -> dict:
         "timestamp": datetime.now(timezone.utc).isoformat(),
     }
 
-    # Phát sóng qua WebSocket tới tất cả Web/Mobile clients
+    # Lưu vào bảng đồng bộ farm_newsfeed_state & phát sóng qua WebSocket
+    try:
+        from app.background.newsfeed_service import sync_newsfeed_to_store
+        state = sync_newsfeed_to_store(briefing_text=briefing_text)
+        await ws_manager.broadcast(event="newsfeed_update", data=state)
+    except Exception as nf_err:
+        logger.warning(f"Could not sync morning briefing to newsfeed store: {nf_err}")
+
     await ws_manager.broadcast(event="morning_briefing", data=briefing_payload)
     logger.info("Daily farm morning briefing sent via WebSocket.")
     return briefing_payload

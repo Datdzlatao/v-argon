@@ -664,7 +664,7 @@ export default function FeedStaffAttendance({
 
       setEnrollModalMsg({
         type: 'success',
-        text: `🎉 Đã đăng ký thành công FaceID 3 góc eKYC cho ${enrollStaffName} (${enrollStaffId})!`
+        text: `🎉 Đã đăng ký thành công khuôn mặt 3 góc cho ${enrollStaffName} (${enrollStaffId})!`
       });
 
       await fetchInitialData();
@@ -684,7 +684,7 @@ export default function FeedStaffAttendance({
     } catch (err: any) {
       setEnrollModalMsg({
         type: 'error',
-        text: `Lỗi đăng ký FaceID: ${err.message || err}`
+        text: `Lỗi đăng ký khuôn mặt: ${err.message || err}`
       });
     } finally {
       setIsEnrolling(false);
@@ -734,7 +734,7 @@ export default function FeedStaffAttendance({
               </span>
             </div>
             <p className="text-xs text-slate-500 mt-0.5">
-              Nhận diện khuôn mặt FaceID • Tự động quét trang phục bảo hộ chuẩn nông trại
+              Nhận diện khuôn mặt • Tự động kiểm tra trang phục bảo hộ chuẩn nông trại
             </p>
           </div>
         </div>
@@ -754,7 +754,7 @@ export default function FeedStaffAttendance({
             className="text-xs px-3.5 py-1.5 rounded-xl font-bold bg-slate-900 hover:bg-slate-800 text-white shadow-sm transition flex items-center gap-1.5 cursor-pointer"
           >
             <UserPlus className="w-3.5 h-3.5" />
-            <span>+ Thêm FaceID</span>
+            <span>+ Thêm khuôn mặt</span>
           </button>
 
           <button
@@ -821,7 +821,7 @@ export default function FeedStaffAttendance({
               </div>
               <div>
                 <div className="text-xs font-bold text-slate-900 flex items-center gap-1.5">
-                  <span>Bước 1: Xác Thực Khuôn Mặt (FaceID)</span>
+                  <span>Bước 1: Xác Thực Khuôn Mặt</span>
                 </div>
                 <div className="text-[11px] text-slate-500 mt-0.5">
                   {identifiedStaff ? (
@@ -883,7 +883,7 @@ export default function FeedStaffAttendance({
             </div>
 
             {checkinStep === 'step2_uniform' && (
-              <span className="text-[10px] font-bold uppercase tracking-wider text-cyan-700 bg-cyan-100/70 px-2.5 py-1 rounded-full">
+              <span className="shrink-0 whitespace-nowrap text-[10px] font-bold uppercase tracking-wider text-cyan-700 bg-cyan-100/70 px-2.5 py-1 rounded-full">
                 Đang Quét
               </span>
             )}
@@ -892,11 +892,11 @@ export default function FeedStaffAttendance({
       </div>
 
       {/* ─────────────────────────────────────────────────────────────
-          3. MAIN INTERACTION AREA: VIEWPORT & LIVE CONTEXT PANEL
+          3. MAIN INTERACTION AREA: FULL-WIDTH VIEWPORT & CONTEXT PANEL
       ───────────────────────────────────────────────────────────── */}
-      <div className="grid grid-cols-1 lg:grid-cols-12 gap-5 items-start">
-        {/* CAMERA VIEWPORT (8 cols) */}
-        <div className="lg:col-span-7 xl:col-span-8 space-y-3">
+      <div className="space-y-4">
+        {/* CAMERA VIEWPORT */}
+        <div className="space-y-3">
           <div className="relative rounded-2xl overflow-hidden bg-slate-950 aspect-video max-h-[440px] flex items-center justify-center border border-slate-800 shadow-inner group">
             {/* Server Hardware WebSocket Video Stream */}
             {isCameraActive && (
@@ -938,21 +938,19 @@ export default function FeedStaffAttendance({
 
             {/* Floating Top Badges when Active */}
             {isCameraActive && (
-              <div className="absolute top-3 inset-x-3 flex items-center justify-between pointer-events-none z-10">
-                <div className="flex items-center gap-2">
-                  <span className="flex items-center gap-1.5 bg-slate-900/80 backdrop-blur-md border border-slate-700 text-slate-200 text-[10px] font-semibold px-2.5 py-1 rounded-full shadow">
-                    <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
-                    Camera chuồng trại (Server AI)
+              <div className="absolute top-3 inset-x-3 flex items-center justify-between gap-2 pointer-events-none z-10">
+                <div className="flex items-center gap-2 min-w-0">
+                  <span className="whitespace-nowrap flex items-center gap-1.5 bg-slate-900/80 backdrop-blur-md border border-slate-700 text-slate-200 text-[10px] font-semibold px-2.5 py-1 rounded-full shadow">
+                    <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse shrink-0" />
+                    Máy quay chuồng trại
                   </span>
-                  <span className="bg-emerald-950/80 backdrop-blur-md border border-emerald-600 text-emerald-300 text-[10px] font-bold px-2 py-1 rounded-full">
+                  <span className="whitespace-nowrap bg-emerald-950/80 backdrop-blur-md border border-emerald-600 text-emerald-300 text-[10px] font-bold px-2.5 py-1 rounded-full">
                     {checkType === 'check_in' ? '🟢 Vào ca' : '🔴 Tan ca'}
                   </span>
                 </div>
 
-                <div className="flex items-center gap-1.5 bg-slate-900/80 backdrop-blur-md border border-slate-700 text-slate-300 text-[10px] font-mono px-2.5 py-1 rounded-full shadow">
-                  <span className="text-emerald-400 font-bold">{liveScanFps} FPS</span>
-                  <span>•</span>
-                  <span className="text-cyan-400">{liveLatencyMs}ms</span>
+                <div className="whitespace-nowrap flex items-center gap-1.5 bg-slate-900/80 backdrop-blur-md border border-slate-700 text-slate-300 text-[10px] px-2.5 py-1 rounded-full shadow shrink-0">
+                  <span className="text-emerald-400 font-bold">{liveScanFps} ảnh/giây</span>
                 </div>
               </div>
             )}
@@ -981,10 +979,10 @@ export default function FeedStaffAttendance({
           {/* Action Toolbar Below Viewfinder */}
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 p-2.5 bg-slate-50 border border-slate-200 rounded-2xl">
             {/* Mode: Vào ca / Tan ca */}
-            <div className="flex items-center gap-1 bg-white p-1 rounded-xl border border-slate-200">
+            <div className="flex items-center gap-1 bg-white p-1 rounded-xl border border-slate-200 shrink-0">
               <button
                 onClick={() => setCheckType('check_in')}
-                className={`py-1.5 px-3 rounded-lg text-xs font-bold transition flex items-center gap-1.5 cursor-pointer ${
+                className={`whitespace-nowrap py-1.5 px-3 rounded-lg text-xs font-bold transition flex items-center gap-1.5 cursor-pointer ${
                   checkType === 'check_in'
                     ? 'bg-emerald-600 text-white shadow-sm'
                     : 'text-slate-600 hover:text-slate-900'
@@ -995,7 +993,7 @@ export default function FeedStaffAttendance({
               </button>
               <button
                 onClick={() => setCheckType('check_out')}
-                className={`py-1.5 px-3 rounded-lg text-xs font-bold transition flex items-center gap-1.5 cursor-pointer ${
+                className={`whitespace-nowrap py-1.5 px-3 rounded-lg text-xs font-bold transition flex items-center gap-1.5 cursor-pointer ${
                   checkType === 'check_out'
                     ? 'bg-rose-600 text-white shadow-sm'
                     : 'text-slate-600 hover:text-slate-900'
@@ -1012,7 +1010,7 @@ export default function FeedStaffAttendance({
                 <>
                   <button
                     onClick={togglePauseLive}
-                    className="text-xs px-2.5 py-1.5 rounded-xl font-semibold bg-white border border-slate-200 text-slate-700 hover:bg-slate-100 transition flex items-center gap-1 cursor-pointer"
+                    className="whitespace-nowrap text-xs px-3 py-1.5 rounded-xl font-semibold bg-white border border-slate-200 text-slate-700 hover:bg-slate-100 transition flex items-center gap-1.5 cursor-pointer"
                   >
                     {isLivePaused ? <Play className="w-3.5 h-3.5 text-emerald-600" /> : <Pause className="w-3.5 h-3.5" />}
                     <span>{isLivePaused ? 'Tiếp tục' : 'Tạm dừng'}</span>
@@ -1020,7 +1018,7 @@ export default function FeedStaffAttendance({
 
                   <button
                     onClick={stopCamera}
-                    className="text-xs px-3 py-1.5 rounded-xl font-semibold bg-rose-50 text-rose-700 border border-rose-200 hover:bg-rose-100 transition flex items-center gap-1 cursor-pointer"
+                    className="whitespace-nowrap text-xs px-3 py-1.5 rounded-xl font-semibold bg-rose-50 text-rose-700 border border-rose-200 hover:bg-rose-100 transition flex items-center gap-1.5 cursor-pointer"
                   >
                     <CameraOff className="w-3.5 h-3.5" />
                     <span>Tắt Camera</span>
@@ -1048,8 +1046,8 @@ export default function FeedStaffAttendance({
           </div>
         </div>
 
-        {/* LIVE CONTEXT & ASSESSMENT PANEL (4 cols) */}
-        <div className="lg:col-span-5 xl:col-span-4 space-y-3">
+        {/* LIVE CONTEXT & ASSESSMENT PANEL (Full width balanced) */}
+        <div className="space-y-3">
           {/* STEP 1: CHỜ QUÉT KHUÔN MẶT */}
           {checkinStep === 'step1_face' && !identifiedStaff && (
             <div className="p-4 rounded-2xl bg-slate-50 border border-slate-200 space-y-3">
@@ -1058,7 +1056,7 @@ export default function FeedStaffAttendance({
                   1
                 </div>
                 <div>
-                  <h4 className="font-bold text-xs text-slate-900">Bước 1: Quét Khuôn Mặt (FaceID)</h4>
+                  <h4 className="font-bold text-xs text-slate-900">Bước 1: Quét Khuôn Mặt</h4>
                   <p className="text-[11px] text-slate-500">Đứng trước máy ảnh và bỏ khẩu trang</p>
                 </div>
               </div>
@@ -1144,39 +1142,39 @@ export default function FeedStaffAttendance({
           {/* STEP 2: QUÉT TRANG PHỤC & KHẨU TRANG (Chuẩn an toàn sinh học) */}
           {checkinStep === 'step2_uniform' && (
             <div className="p-4 rounded-2xl bg-slate-900 text-white space-y-3.5 shadow-md">
-              <div className="flex items-center justify-between border-b border-slate-800 pb-2.5">
-                <div>
-                  <span className="text-[10px] font-bold uppercase tracking-wider text-cyan-400 bg-cyan-950 px-2 py-0.5 rounded-full border border-cyan-800">
+              <div className="flex items-center justify-between gap-2 border-b border-slate-800 pb-2.5">
+                <div className="min-w-0">
+                  <span className="inline-block whitespace-nowrap text-[10px] font-bold uppercase tracking-wider text-cyan-400 bg-cyan-950 px-2.5 py-0.5 rounded-full border border-cyan-800">
                     Bước 2: Quét An Toàn Sinh Học
                   </span>
-                  <h4 className="font-bold text-xs text-slate-200 mt-1">
+                  <h4 className="font-bold text-xs text-slate-200 mt-1.5">
                     Nhân viên: <span className="text-cyan-300 font-extrabold">{identifiedStaff?.staffName}</span>
                   </h4>
                 </div>
                 <button
                   onClick={goBackToStep1}
-                  className="text-[11px] px-2.5 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 transition"
+                  className="whitespace-nowrap shrink-0 text-[11px] px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 transition cursor-pointer"
                 >
                   ← Quay lại
                 </button>
               </div>
 
-              {/* 3 Checklist Items (Mặc định chuẩn image.jpg/png) */}
-              <div className="space-y-2 text-xs">
+              {/* 3 Checklist Items (Balanced 3-column grid) */}
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5 text-xs">
                 {/* 1. Khẩu trang y tế */}
-                <div className={`p-2.5 rounded-xl border flex items-center justify-between ${
+                <div className={`p-3 rounded-xl border flex flex-col justify-between gap-2 ${
                   uniformResult?.mask?.has_mask 
                     ? 'bg-emerald-950/70 border-emerald-500 text-emerald-200' 
                     : 'bg-rose-950/70 border-rose-500 text-rose-200'
                 }`}>
-                  <div className="flex items-center gap-2">
-                    <span className="text-base">😷</span>
-                    <div>
+                  <div className="flex items-start gap-2">
+                    <span className="text-base shrink-0">😷</span>
+                    <div className="min-w-0">
                       <div className="font-bold">1. Khẩu Trang Y Tế</div>
                       <div className="text-[10px] opacity-75">Bắt buộc che kín mũi miệng</div>
                     </div>
                   </div>
-                  <span className={`px-2 py-0.5 rounded font-bold text-[10px] uppercase ${
+                  <span className={`self-start whitespace-nowrap px-2 py-0.5 rounded font-bold text-[10px] uppercase ${
                     uniformResult?.mask?.has_mask ? 'bg-emerald-500 text-slate-950' : 'bg-rose-500 text-white'
                   }`}>
                     {uniformResult?.mask?.has_mask ? '✓ ĐÃ ĐEO' : '✗ CHƯA ĐEO'}
@@ -1184,38 +1182,48 @@ export default function FeedStaffAttendance({
                 </div>
 
                 {/* 2. Áo bảo hộ màu xanh dương */}
-                <div className={`p-2.5 rounded-xl border flex items-center justify-between ${
+                <div className={`p-3 rounded-xl border flex flex-col justify-between gap-2 ${
                   ['blue', 'cyan', 'white'].includes(uniformResult?.shirt_color)
                     ? 'bg-emerald-950/70 border-emerald-500 text-emerald-200'
                     : 'bg-slate-800/80 border-slate-700 text-slate-300'
                 }`}>
-                  <div className="flex items-center gap-2">
-                    <span className="text-base">👔</span>
-                    <div>
+                  <div className="flex items-start gap-2">
+                    <span className="text-base shrink-0">👔</span>
+                    <div className="min-w-0">
                       <div className="font-bold">2. Áo Bảo Hộ Xanh</div>
                       <div className="text-[10px] opacity-75">Chuẩn màu xanh nông trại</div>
                     </div>
                   </div>
-                  <span className="font-bold text-[10px] uppercase px-2 py-0.5 rounded bg-slate-900 border border-slate-700">
-                    {uniformResult?.shirt_color ? uniformResult.shirt_color.toUpperCase() : 'QUÉT...'}
+                  <span className="self-start whitespace-nowrap font-bold text-[10px] uppercase px-2 py-0.5 rounded bg-slate-900 border border-slate-700">
+                    {uniformResult?.shirt_color === 'blue' || uniformResult?.shirt_color === 'cyan'
+                      ? 'MÀU XANH'
+                      : uniformResult?.shirt_color === 'white'
+                      ? 'MÀU TRẮNG'
+                      : uniformResult?.shirt_color
+                      ? 'CHƯA RÕ'
+                      : 'ĐANG QUÉT...'}
                   </span>
                 </div>
 
                 {/* 3. Quần dài tối màu */}
-                <div className={`p-2.5 rounded-xl border flex items-center justify-between ${
+                <div className={`p-3 rounded-xl border flex flex-col justify-between gap-2 ${
                   uniformResult?.pants_color === 'dark'
                     ? 'bg-emerald-950/70 border-emerald-500 text-emerald-200'
                     : 'bg-slate-800/80 border-slate-700 text-slate-300'
                 }`}>
-                  <div className="flex items-center gap-2">
-                    <span className="text-base">👖</span>
-                    <div>
+                  <div className="flex items-start gap-2">
+                    <span className="text-base shrink-0">👖</span>
+                    <div className="min-w-0">
                       <div className="font-bold">3. Quần Dài Tối Màu</div>
                       <div className="text-[10px] opacity-75">Quần đen / xanh đen</div>
                     </div>
                   </div>
-                  <span className="font-bold text-[10px] uppercase px-2 py-0.5 rounded bg-slate-900 border border-slate-700">
-                    {uniformResult?.pants_color ? uniformResult.pants_color.toUpperCase() : 'QUÉT...'}
+                  <span className="self-start whitespace-nowrap font-bold text-[10px] uppercase px-2 py-0.5 rounded bg-slate-900 border border-slate-700">
+                    {uniformResult?.pants_color === 'dark'
+                      ? 'TỐI MÀU'
+                      : uniformResult?.pants_color
+                      ? 'CHƯA RÕ'
+                      : 'ĐANG QUÉT...'}
                   </span>
                 </div>
               </div>
@@ -1263,7 +1271,7 @@ export default function FeedStaffAttendance({
               <div className="p-2.5 rounded-xl bg-black/15 text-xs space-y-1">
                 <div className="flex items-center gap-1.5 text-emerald-100">
                   <span>✓</span>
-                  <span>Đã đối chiếu FaceID chính xác</span>
+                  <span>Đã đối chiếu khuôn mặt chính xác</span>
                 </div>
                 <div className="flex items-center gap-1.5 text-emerald-100">
                   <span>✓</span>
@@ -1452,7 +1460,7 @@ export default function FeedStaffAttendance({
                   <ShieldCheck className="w-4 h-4 text-white" />
                 </div>
                 <div>
-                  <h4 className="font-bold text-sm">Đăng Ký FaceID eKYC 3 Góc (Chuẩn Ngân Hàng)</h4>
+                  <h4 className="font-bold text-sm">Đăng Ký Khuôn Mặt 3 Góc</h4>
                   <p className="text-[11px] text-emerald-100">Chụp 3 góc: Thẳng, Nghiêng Trái, Nghiêng Phải để nhận diện chính xác 100%</p>
                 </div>
               </div>
@@ -1777,7 +1785,7 @@ export default function FeedStaffAttendance({
                   ) : (
                     <>
                       <CheckCircle2 className="w-3.5 h-3.5" />
-                      <span>Lưu & Kích Hoạt FaceID 3 Góc</span>
+                      <span>Lưu & Kích Hoạt Khuôn Mặt 3 Góc</span>
                     </>
                   )}
                 </button>

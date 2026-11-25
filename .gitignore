@@ -29,8 +29,8 @@ frontend/tsconfig.tsbuildinfo
 node_modules/
 frontend/node_modules/
 known_faces
-smartfarmer
-stem
+legacy_web_dashboard
+disease_diagnosis_rag
 thêm
 ui-ux-pro-max-skill-main
 andrej-karpathy-skills-main

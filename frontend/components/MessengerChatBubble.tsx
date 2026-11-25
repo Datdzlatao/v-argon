@@ -12,15 +12,19 @@ import {
   Smile, 
   Maximize2,
   Wrench,
-  CheckCircle2
+  CheckCircle2,
+  ImagePlus
 } from 'lucide-react';
-import { sendAgentChat, getChatHistory } from '../lib/agent-api';
+import { sendAgentChat, sendAgentChatStream, getChatHistory, fileToBase64, diagnoseDiseaseWithBase64, connectAgentWebSocket } from '../lib/agent-api';
+import GeminiMarkdown from './GeminiMarkdown';
 
 interface ChatMessage {
   id: string;
   sender: 'user' | 'agent';
   text: string;
   time: string;
+  imageUrl?: string;
+  isStreaming?: boolean;
   toolsCalled?: Array<{
     tool: string;
     args: Record<string, any>;
@@ -59,7 +63,14 @@ export default function MessengerChatBubble({
   ]);
   const [inputValue, setInputValue] = useState('');
   const [isLoading, setIsLoading] = useState(false);
+  const [hasStreamChunk, setHasStreamChunk] = useState(false);
+  const [selectedImage, setSelectedImage] = useState<{
+    base64: string;
+    contentType: string;
+    dataUrl: string;
+  } | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   // Load chat history from backend on open or pen/user change
   useEffect(() => {
@@ -95,6 +106,42 @@ export default function MessengerChatBubble({
     };
   }, [isOpen, penId, userId, penName]);
 
+  // Sync realtime chat messages from other devices (e.g. Android) via WebSocket
+  useEffect(() => {
+    const cleanup = connectAgentWebSocket(
+      (event: string, d: any) => {
+        if (event !== 'chat_message' || !d) return;
+        if (d.user_id && d.user_id !== userId) return;
+        if (d.pen_id && penId && d.pen_id !== penId) return;
+        // Avoid duplicating local streaming/user messages
+        setMessages((prev) => {
+          const exists = prev.some(
+            (m) =>
+              (d.id && String(m.id) === String(d.id)) ||
+              (m.sender === d.sender && m.text === d.content)
+          );
+          if (exists) return prev;
+          return [
+            ...prev,
+            {
+              id: String(d.id || Date.now()),
+              sender: d.sender as 'user' | 'agent',
+              text: d.content,
+              time: d.created_at
+                ? new Date(d.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+                : 'Vừa xong',
+              toolsCalled: d.tool_calls,
+            },
+          ];
+        });
+      },
+      () => {}
+    );
+    return () => {
+      cleanup?.();
+    };
+  }, [userId, penId]);
+
   // Auto scroll to bottom
   useEffect(() => {
     if (isOpen) {
@@ -109,38 +156,175 @@ export default function MessengerChatBubble({
     'Kho thức ăn còn đủ không?',
   ];
 
+  const handleImagePick = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    e.target.value = '';
+    if (!file) return;
+    try {
+      const encoded = await fileToBase64(file);
+      setSelectedImage(encoded);
+    } catch (err) {
+      console.error('Image base64 encode error:', err);
+    }
+  };
+
+  const handlePasteImage = async (e: React.ClipboardEvent<HTMLInputElement>) => {
+    const items = e.clipboardData?.items;
+    if (!items) return;
+    for (let i = 0; i < items.length; i++) {
+      const item = items[i];
+      if (item.type.startsWith('image/')) {
+        const file = item.getAsFile();
+        if (file) {
+          e.preventDefault();
+          try {
+            const encoded = await fileToBase64(file);
+            setSelectedImage(encoded);
+          } catch (err) {
+            console.error('Paste image base64 encode error:', err);
+          }
+          break;
+        }
+      }
+    }
+  };
+
   const handleSend = async (messageText?: string) => {
-    const textToSend = messageText || inputValue;
-    if (!textToSend.trim() || isLoading) return;
+    const textToSend = (messageText ?? inputValue).trim();
+    const imageToSend = messageText ? null : selectedImage;
+    if ((!textToSend && !imageToSend) || isLoading) return;
 
     const userMsg: ChatMessage = {
       id: Date.now().toString(),
       sender: 'user',
-      text: textToSend,
+      text: textToSend || '📷 Gửi ảnh kiểm tra bệnh',
       time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+      imageUrl: imageToSend?.dataUrl,
     };
 
     setMessages((prev) => [...prev, userMsg]);
-    setInputValue('');
+    if (!messageText) {
+      setInputValue('');
+      setSelectedImage(null);
+    }
     setIsLoading(true);
+    setHasStreamChunk(false);
+
+    const streamMsgId = (Date.now() + 1).toString();
+    const animateReveal = async (fullText: string, toolsCalled?: ChatMessage['toolsCalled']) => {
+      setHasStreamChunk(true);
+      setMessages((prev) => [
+        ...prev,
+        {
+          id: streamMsgId,
+          sender: 'agent',
+          text: '',
+          time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+          isStreaming: true,
+          toolsCalled,
+        },
+      ]);
+      const tokens = fullText.split(/(\s+)/);
+      let acc = '';
+      const step = Math.max(1, Math.ceil(tokens.length / 45));
+      for (let i = 0; i < tokens.length; i += step) {
+        acc += tokens.slice(i, i + step).join('');
+        setMessages((prev) => prev.map((m) => (m.id === streamMsgId ? { ...m, text: acc } : m)));
+        await new Promise((r) => setTimeout(r, 18));
+      }
+      setMessages((prev) =>
+        prev.map((m) => (m.id === streamMsgId ? { ...m, text: fullText, isStreaming: false } : m))
+      );
+    };
 
     try {
-      // Direct integration with FastAPI AI Agent (/api/chat) with pen_id & user_id
-      const data = await sendAgentChat(textToSend, penId, userId);
+      if (imageToSend) {
+        const diag = await diagnoseDiseaseWithBase64(
+          imageToSend.base64,
+          textToSend || 'Phân tích và chẩn đoán hình ảnh nông nghiệp này giúp tôi',
+          imageToSend.contentType,
+          penId,
+          userId
+        );
+        const summaryLines = [
+          diag.disease_name ? `🩺 Chẩn đoán: ${diag.disease_name}` : null,
+          diag.species ? `🌿/🐖 Đối tượng: ${diag.species} (${diag.category === 'crop' ? 'Cây trồng' : 'Vật nuôi'})` : null,
+          diag.text ? `🔍 Mô tả: ${diag.text}` : null,
+          `\n📋 Hướng dẫn xử lý:\n${diag.answer}`,
+          diag.sources && diag.sources.length > 0 ? `\n📚 Nguồn tham khảo: ${diag.sources.join(', ')}` : null,
+        ]
+          .filter(Boolean)
+          .join('\n');
 
-      const agentMsg: ChatMessage = {
-        id: (Date.now() + 1).toString(),
-        sender: 'agent',
-        text: data.reply || 'Đã thực hiện xong yêu cầu.',
-        time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-        toolsCalled: data.tool_calls,
-      };
+        await animateReveal(summaryLines, [
+          {
+            tool: 'Kiểm tra bệnh qua hình ảnh',
+            args: { content_type: imageToSend.contentType },
+            result: diag.disease_name || 'Đã phân tích xong hình ảnh',
+          },
+        ]);
+        setIsLoading(false);
+        setHasStreamChunk(false);
+        return;
+      }
 
-      setMessages((prev) => [...prev, agentMsg]);
+      // Real-time SSE Streaming with Gemini Web animation
+      let accumulated = '';
+      let msgCreated = false;
+      await sendAgentChatStream(textToSend, penId, userId, {
+        onChunk: (delta) => {
+          accumulated += delta;
+          if (!msgCreated) {
+            msgCreated = true;
+            setHasStreamChunk(true);
+            setMessages((prev) => [
+              ...prev,
+              {
+                id: streamMsgId,
+                sender: 'agent',
+                text: accumulated,
+                time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+                isStreaming: true,
+              },
+            ]);
+          } else {
+            setMessages((prev) =>
+              prev.map((m) => (m.id === streamMsgId ? { ...m, text: accumulated } : m))
+            );
+          }
+        },
+        onDone: (fullReply, toolCalls) => {
+          const finalText = fullReply || accumulated || 'Đã thực hiện xong yêu cầu.';
+          if (!msgCreated) {
+            msgCreated = true;
+            setHasStreamChunk(true);
+            setMessages((prev) => [
+              ...prev,
+              {
+                id: streamMsgId,
+                sender: 'agent',
+                text: finalText,
+                time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+                isStreaming: false,
+                toolsCalled: toolCalls,
+              },
+            ]);
+          } else {
+            setMessages((prev) =>
+              prev.map((m) =>
+                m.id === streamMsgId
+                  ? { ...m, text: finalText, isStreaming: false, toolsCalled: toolCalls }
+                  : m
+              )
+            );
+          }
+        },
+      });
       setIsLoading(false);
+      setHasStreamChunk(false);
       return;
     } catch (err) {
-      console.warn('Backend /api/chat error, using fallback responder:', err);
+      console.warn('Backend AI/RAG stream error, using fallback responder:', err);
     }
 
     // Local fallback intelligent response
@@ -229,12 +413,23 @@ export default function MessengerChatBubble({
                     </div>
                   )}
 
-                  <div className={`max-w-[75%] rounded-2xl px-3.5 py-2 text-xs shadow-sm ${
+                  <div className={`max-w-[80%] min-w-0 break-words overflow-hidden rounded-2xl px-3.5 py-2 text-xs shadow-sm ${
                     isUser
                       ? 'bg-emerald-700 text-white rounded-br-sm'
                       : 'bg-white text-fb-text border border-slate-200 rounded-bl-sm leading-relaxed'
                   }`}>
-                    <p className="whitespace-pre-line">{m.text}</p>
+                    {m.imageUrl && (
+                      <img
+                        src={m.imageUrl}
+                        alt="Ảnh kiểm chứng"
+                        className="w-full max-h-40 object-cover rounded-xl mb-1.5 border border-white/20"
+                      />
+                    )}
+                    <GeminiMarkdown
+                      text={m.text}
+                      isUser={isUser}
+                      isStreaming={Boolean(m.isStreaming)}
+                    />
                     {m.toolsCalled && m.toolsCalled.length > 0 && (
                       <div className="mt-2 pt-1.5 border-t border-slate-100 text-[10px] space-y-1">
                         {m.toolsCalled.map((t: any, idx) => (
@@ -258,15 +453,20 @@ export default function MessengerChatBubble({
               );
             })}
 
-            {isLoading && (
+            {isLoading && !hasStreamChunk && (
               <div className="flex items-end gap-2 justify-start">
-                <div className="w-7 h-7 rounded-full bg-emerald-600 text-white flex items-center justify-center text-xs shrink-0">
-                  🤖
+                <div className="w-7 h-7 rounded-full bg-gradient-to-tr from-emerald-600 to-teal-400 text-white flex items-center justify-center text-xs shrink-0 animate-pulse">
+                  <Sparkles className="w-3.5 h-3.5" />
                 </div>
-                <div className="bg-white border border-slate-200 rounded-2xl rounded-bl-sm px-3.5 py-2.5 text-xs text-slate-500 flex items-center gap-1 shadow-sm">
-                  <span className="w-1.5 h-1.5 rounded-full bg-slate-400 animate-bounce" />
-                  <span className="w-1.5 h-1.5 rounded-full bg-slate-400 animate-bounce [animation-delay:0.2s]" />
-                  <span className="w-1.5 h-1.5 rounded-full bg-slate-400 animate-bounce [animation-delay:0.4s]" />
+                <div className="w-[70%] bg-white border border-emerald-100 rounded-2xl rounded-bl-sm px-3.5 py-2.5 shadow-sm space-y-2">
+                  <div className="flex items-center gap-1.5 text-[11px] font-medium text-emerald-700">
+                    <Sparkles className="w-3 h-3 animate-spin" />
+                    <span>Trợ lý đang suy nghĩ...</span>
+                  </div>
+                  <div className="space-y-1.5 animate-pulse">
+                    <div className="h-2 rounded-full bg-gradient-to-r from-emerald-200 via-teal-100 to-emerald-200 w-11/12" />
+                    <div className="h-2 rounded-full bg-gradient-to-r from-emerald-100 via-teal-200 to-emerald-100 w-3/4" />
+                  </div>
                 </div>
               </div>
             )}
@@ -287,6 +487,30 @@ export default function MessengerChatBubble({
             ))}
           </div>
 
+          {/* Image Preview Bar */}
+          {selectedImage && (
+            <div className="px-3 py-2 bg-emerald-50/80 border-t border-emerald-200 flex items-center justify-between gap-2">
+              <div className="flex items-center gap-2 min-w-0">
+                <img
+                  src={selectedImage.dataUrl}
+                  alt="Xem trước"
+                  className="w-10 h-10 rounded-lg object-cover border border-emerald-300 shrink-0"
+                />
+                <span className="text-[11px] text-emerald-800 font-medium truncate">
+                  Ảnh đã sẵn sàng gửi kiểm tra bệnh
+                </span>
+              </div>
+              <button
+                type="button"
+                onClick={() => setSelectedImage(null)}
+                className="w-6 h-6 rounded-full bg-white text-slate-500 hover:text-rose-600 flex items-center justify-center border border-slate-200 shrink-0"
+                title="Bỏ ảnh"
+              >
+                <X className="w-3.5 h-3.5" />
+              </button>
+            </div>
+          )}
+
           {/* Input Bar */}
           <form
             onSubmit={(e) => {
@@ -296,15 +520,32 @@ export default function MessengerChatBubble({
             className="p-2.5 bg-fb-card border-t border-fb-divider flex items-center gap-2"
           >
             <input
+              ref={fileInputRef}
+              type="file"
+              accept="image/*"
+              onChange={handleImagePick}
+              className="hidden"
+            />
+            <button
+              type="button"
+              onClick={() => fileInputRef.current?.click()}
+              disabled={isLoading}
+              title="Gửi ảnh để kiểm tra bệnh"
+              className="w-8 h-8 rounded-full bg-fb-bg hover:bg-emerald-50 text-emerald-700 border border-fb-divider flex items-center justify-center transition shrink-0 cursor-pointer disabled:opacity-40"
+            >
+              <ImagePlus className="w-4 h-4" />
+            </button>
+            <input
               type="text"
-              placeholder="Nhập câu hỏi hoặc yêu cầu hỗ trợ..."
+              placeholder={selectedImage ? 'Mô tả thêm triệu chứng (tuỳ chọn)...' : 'Nhập câu hỏi hoặc dán ảnh vào đây...'}
               value={inputValue}
               onChange={(e) => setInputValue(e.target.value)}
+              onPaste={handlePasteImage}
               className="flex-1 bg-fb-bg text-xs rounded-full px-3.5 py-2 border border-fb-divider focus:outline-none focus:ring-2 focus:ring-emerald-500"
             />
             <button
               type="submit"
-              disabled={!inputValue.trim() || isLoading}
+              disabled={(!inputValue.trim() && !selectedImage) || isLoading}
               className="w-8 h-8 rounded-full bg-emerald-600 hover:bg-emerald-700 text-white flex items-center justify-center transition disabled:opacity-40 shadow-sm shrink-0 cursor-pointer"
             >
               <Send className="w-3.5 h-3.5" />

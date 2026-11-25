@@ -1,13 +1,23 @@
+const isLocalBrowser =
+  typeof window !== 'undefined' &&
+  (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1');
+
 export const BACKEND_URL = (
-  process.env.NEXT_PUBLIC_API_URL || 'https://dat-latitude-5590-2.tail2bda46.ts.net:8443'
+  isLocalBrowser
+    ? 'http://localhost:8000'
+    : process.env.NEXT_PUBLIC_API_URL || 'https://dat-latitude-5590-2.tail2bda46.ts.net:8443'
 ).replace(/\/+$/, '');
 
 export const FACE_API_URL = (
-  process.env.NEXT_PUBLIC_FACE_API_URL || 'https://dat-latitude-5590-2.tail2bda46.ts.net:10000'
+  isLocalBrowser
+    ? 'http://localhost:8001'
+    : process.env.NEXT_PUBLIC_FACE_API_URL || 'https://dat-latitude-5590-2.tail2bda46.ts.net:10000'
 ).replace(/\/+$/, '');
 
 export const ACTION_API_URL = (
-  process.env.NEXT_PUBLIC_ACTION_API_URL || 'https://dat-latitude-5590-2.tail2bda46.ts.net'
+  isLocalBrowser
+    ? 'http://localhost:8002'
+    : process.env.NEXT_PUBLIC_ACTION_API_URL || 'https://dat-latitude-5590-2.tail2bda46.ts.net'
 ).replace(/\/+$/, '');
 
 function toWsBase(httpUrl: string): string {
@@ -147,5 +157,222 @@ export async function sendAgentChat(message: string, penId?: string): Promise<an
     body: JSON.stringify({ message, pen_id: penId, user_id: 'ios_pwa_user' }),
   });
   if (!res.ok) throw new Error(`Chat error ${res.status}`);
+  return res.json();
+}
+
+export async function sendAgentChatStream(
+  message: string,
+  penId: string | undefined,
+  callbacks: {
+    onStatus?: (text: string) => void;
+    onChunk: (delta: string) => void;
+    onDone?: (fullReply: string, toolCalls: any[]) => void;
+  }
+): Promise<void> {
+  const res = await fetch(`${BACKEND_URL}/api/chat/stream`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ message, pen_id: penId, user_id: 'ios_pwa_user' }),
+  });
+
+  if (!res.ok || !res.body) {
+    const fallback = await sendAgentChat(message, penId);
+    callbacks.onChunk(fallback.reply || 'Đã xử lý.');
+    callbacks.onDone?.(fallback.reply || '', fallback.tool_calls || []);
+    return;
+  }
+
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder('utf-8');
+  let buffer = '';
+  let fullReply = '';
+  let doneCalled = false;
+
+  const processLine = (rawLine: string) => {
+    const trimmed = rawLine.trim();
+    if (!trimmed.startsWith('data:')) return;
+    const jsonStr = trimmed.slice(5).trim();
+    if (!jsonStr) return;
+    try {
+      const evt = JSON.parse(jsonStr);
+      if (evt.type === 'status' && evt.text) {
+        callbacks.onStatus?.(evt.text);
+      } else if (evt.type === 'chunk' && evt.text) {
+        fullReply += evt.text;
+        callbacks.onChunk(evt.text);
+      } else if (evt.type === 'done') {
+        fullReply = evt.reply || fullReply;
+        doneCalled = true;
+        callbacks.onDone?.(fullReply, evt.tool_calls || []);
+      } else if (evt.type === 'error') {
+        throw new Error(evt.detail || 'Stream error');
+      }
+    } catch (e) {
+      if (e instanceof SyntaxError) return;
+      throw e;
+    }
+  };
+
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+
+    const lines = buffer.split('\n');
+    buffer = lines.pop() || '';
+    for (const line of lines) {
+      processLine(line);
+    }
+  }
+
+  if (buffer.trim()) {
+    processLine(buffer);
+  }
+
+  if (!doneCalled) {
+    if (!fullReply) {
+      const fallback = await sendAgentChat(message, penId);
+      fullReply = fallback.reply || 'Đã xử lý.';
+      callbacks.onChunk(fullReply);
+      callbacks.onDone?.(fullReply, fallback.tool_calls || []);
+    } else {
+      callbacks.onDone?.(fullReply, []);
+    }
+  }
+}
+
+export interface DiagnosisResponse {
+  category?: string;
+  species?: string;
+  disease_name?: string;
+  text: string;
+  answer: string;
+  sources?: string[];
+  timestamp?: string;
+}
+
+export function fileToBase64(
+  file: File
+): Promise<{ base64: string; contentType: string; dataUrl: string }> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      const dataUrl = String(reader.result || '');
+      const commaIdx = dataUrl.indexOf(',');
+      const base64 = commaIdx >= 0 ? dataUrl.slice(commaIdx + 1) : dataUrl;
+      resolve({
+        base64,
+        contentType: file.type || 'image/jpeg',
+        dataUrl,
+      });
+    };
+    reader.onerror = () => reject(new Error('Không thể đọc file ảnh'));
+    reader.readAsDataURL(file);
+  });
+}
+
+export async function diagnoseDiseaseWithBase64(
+  imageBase64?: string,
+  userQuery?: string,
+  contentType: string = 'image/jpeg',
+  penId?: string,
+  userId: string = 'ios_pwa_user'
+): Promise<DiagnosisResponse> {
+  const res = await fetch(`${BACKEND_URL}/api/diagnose/base64`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      user_query: userQuery || undefined,
+      image_base64: imageBase64 || undefined,
+      content_type: contentType,
+      pen_id: penId || undefined,
+      user_id: userId,
+    }),
+  });
+  if (!res.ok) {
+    const errText = await res.text();
+    throw new Error(`RAG Diagnosis error ${res.status}: ${errText}`);
+  }
+  return res.json();
+}
+
+export async function getChatHistory(userId: string = 'ios_pwa_user', penId?: string): Promise<any[]> {
+  try {
+    const url = new URL(`${BACKEND_URL}/api/chat/history`);
+    url.searchParams.append('user_id', userId);
+    if (penId) url.searchParams.append('pen_id', penId);
+    const res = await fetch(url.toString());
+    if (!res.ok) return [];
+    const data = await res.json();
+    return data.messages || [];
+  } catch {
+    return [];
+  }
+}
+
+export interface NewsfeedItem {
+  id: string;
+  title: string;
+  summary: string;
+  category: string;
+  severity: 'critical' | 'warning' | 'info';
+  pen_id?: string;
+  target_type?: string | null;
+  target_id?: string | null;
+  timestamp: string;
+  action_label: string;
+  action_route: string;
+  is_resolved?: boolean;
+  quick_api?: {
+    method: string;
+    endpoint: string;
+    body: Record<string, any>;
+  } | null;
+}
+
+export interface NewsfeedState {
+  summary_text: string;
+  briefing_text?: string | null;
+  pending_tasks_count: number;
+  low_stock_count: number;
+  sick_animals_count: number;
+  updated_at?: string;
+  items: NewsfeedItem[];
+}
+
+export async function fetchNewsfeedState(limit: number = 12): Promise<NewsfeedState | null> {
+  try {
+    const res = await fetch(`${BACKEND_URL}/api/newsfeed?limit=${limit}`, { cache: 'no-store' });
+    if (!res.ok) return null;
+    const data = await res.json();
+    return {
+      summary_text: data.summary_text || '',
+      briefing_text: data.briefing_text ?? null,
+      pending_tasks_count: Number(data.pending_tasks_count ?? 0),
+      low_stock_count: Number(data.low_stock_count ?? 0),
+      sick_animals_count: Number(data.sick_animals_count ?? 0),
+      updated_at: data.updated_at,
+      items: data.items || [],
+    };
+  } catch {
+    return null;
+  }
+}
+
+export async function fetchNewsfeed(limit: number = 10): Promise<NewsfeedItem[]> {
+  const state = await fetchNewsfeedState(limit);
+  return state?.items || [];
+}
+
+export async function executeNewsfeedQuickApi(
+  endpoint: string,
+  body: Record<string, any>
+): Promise<any> {
+  const res = await fetch(`${BACKEND_URL}${endpoint}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) throw new Error(`Quick action error ${res.status}`);
   return res.json();
 }

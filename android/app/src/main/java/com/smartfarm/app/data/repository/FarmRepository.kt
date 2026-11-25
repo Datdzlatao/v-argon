@@ -433,6 +433,302 @@ class FarmRepository(
         }
     }
 
+    suspend fun sendChatStream(
+        message: String,
+        penId: String,
+        userId: String,
+        onChunk: suspend (String) -> Unit,
+        onDone: suspend (String, List<ToolCall>) -> Unit
+    ) {
+        try {
+            val res = api.sendChatStream(
+                mapOf(
+                    "message" to message,
+                    "pen_id" to penId,
+                    "user_id" to userId
+                )
+            )
+            if (!res.isSuccessful || res.body() == null) {
+                val fallback = sendChat(message, penId, userId)
+                onChunk(fallback.content)
+                onDone(fallback.content, fallback.toolCalls ?: emptyList())
+                return
+            }
+
+            val body = res.body()!!
+            val reader = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                body.byteStream().bufferedReader()
+            }
+
+            var accumulated = ""
+            var finalTools: List<ToolCall> = emptyList()
+
+            while (true) {
+                val line = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                    reader.readLine()
+                } ?: break
+
+                val trimmed = line.trim()
+                if (!trimmed.startsWith("data:")) continue
+                val jsonStr = trimmed.removePrefix("data:").trim()
+                if (jsonStr.isEmpty()) continue
+
+                try {
+                    val obj = com.google.gson.JsonParser.parseString(jsonStr).asJsonObject
+                    val type = obj.get("type")?.asString ?: ""
+                    when (type) {
+                        "chunk" -> {
+                            val delta = obj.get("text")?.takeIf { !it.isJsonNull }?.asString ?: ""
+                            if (delta.isNotEmpty()) {
+                                accumulated += delta
+                                onChunk(delta)
+                            }
+                        }
+                        "done" -> {
+                            val reply = obj.get("reply")?.takeIf { !it.isJsonNull }?.asString ?: accumulated
+                            val tools = mutableListOf<ToolCall>()
+                            val toolArr = obj.get("tool_calls")
+                            if (toolArr != null && toolArr.isJsonArray) {
+                                toolArr.asJsonArray.forEach { el ->
+                                    if (el.isJsonObject) {
+                                        val tObj = el.asJsonObject
+                                        val tName = tObj.get("tool")?.takeIf { !it.isJsonNull }?.asString ?: ""
+                                        val resEl = tObj.get("result")
+                                        val tRes = when {
+                                            resEl == null || resEl.isJsonNull -> null
+                                            resEl.isJsonPrimitive -> resEl.asString
+                                            else -> resEl.toString()
+                                        }
+                                        tools.add(ToolCall(tName, emptyMap(), tRes))
+                                    }
+                                }
+                            }
+                            finalTools = tools
+                            onDone(reply.ifBlank { accumulated }, finalTools)
+                            return
+                        }
+                    }
+                } catch (_: Exception) {
+                }
+            }
+            onDone(accumulated.ifBlank { "Đã xử lý chỉ dẫn." }, finalTools)
+        } catch (e: Exception) {
+            val fallback = sendChat(message, penId, userId)
+            onChunk(fallback.content)
+            onDone(fallback.content, fallback.toolCalls ?: emptyList())
+        }
+    }
+
+    suspend fun getChatHistory(userId: String, penId: String?): List<ChatMessage> {
+        return try {
+            val cleanPen = if (penId.isNullOrBlank() || penId == "all") null else penId
+            val res = api.getChatHistory(userId = userId, penId = cleanPen)
+            if (res.isSuccessful && res.body() != null) {
+                val arr = res.body()!!.getAsJsonArray("messages") ?: return emptyList()
+                arr.mapNotNull { el ->
+                    if (!el.isJsonObject) return@mapNotNull null
+                    val obj = el.asJsonObject
+                    val id = obj.get("id")?.takeIf { !it.isJsonNull }?.asString ?: UUID.randomUUID().toString()
+                    val sender = obj.get("sender")?.takeIf { !it.isJsonNull }?.asString ?: "agent"
+                    val content = obj.get("content")?.takeIf { !it.isJsonNull }?.asString ?: ""
+                    val createdAt = obj.get("created_at")?.takeIf { !it.isJsonNull }?.asString ?: ""
+                    val timeLabel = if (createdAt.length >= 16) createdAt.substring(11, 16) else "Đã lưu"
+                    val tools = mutableListOf<ToolCall>()
+                    val toolArr = obj.get("tool_calls")?.takeIf { it.isJsonArray }?.asJsonArray
+                    toolArr?.forEach { tEl ->
+                        if (tEl.isJsonObject) {
+                            val tObj = tEl.asJsonObject
+                            val tName = tObj.get("tool")?.takeIf { !it.isJsonNull }?.asString ?: ""
+                            val tRes = tObj.get("result")?.takeIf { !it.isJsonNull }?.let {
+                                if (it.isJsonPrimitive) it.asString else it.toString()
+                            }
+                            tools.add(ToolCall(tName, emptyMap(), tRes))
+                        }
+                    }
+                    ChatMessage(
+                        id = id,
+                        sender = sender,
+                        content = content,
+                        time = timeLabel,
+                        toolCalls = tools.ifEmpty { null }
+                    )
+                }
+            } else {
+                emptyList()
+            }
+        } catch (_: Exception) {
+            emptyList()
+        }
+    }
+
+    suspend fun diagnoseDiseaseBase64(
+        imageBase64: String,
+        userQuery: String?,
+        contentType: String = "image/jpeg",
+        userId: String = "guest",
+        penId: String? = null
+    ): ChatMessage {
+        try {
+            val payload = mutableMapOf<String, Any>(
+                "image_base64" to imageBase64,
+                "content_type" to contentType,
+                "user_id" to userId
+            )
+            if (!penId.isNullOrBlank() && penId != "all") {
+                payload["pen_id"] = penId
+            }
+            if (!userQuery.isNullOrBlank()) {
+                payload["user_query"] = userQuery
+            }
+
+            val res = api.diagnoseDiseaseBase64(payload)
+            if (res.isSuccessful && res.body() != null) {
+                val body = res.body()!!
+                val diseaseName = body.get("disease_name")?.takeIf { !it.isJsonNull }?.asString
+                val species = body.get("species")?.takeIf { !it.isJsonNull }?.asString
+                val category = body.get("category")?.takeIf { !it.isJsonNull }?.asString
+                val text = body.get("text")?.takeIf { !it.isJsonNull }?.asString
+                val answer = body.get("answer")?.takeIf { !it.isJsonNull }?.asString ?: "Chưa có phác đồ."
+
+                val sourcesList = mutableListOf<String>()
+                val srcArr = body.get("sources")
+                if (srcArr != null && srcArr.isJsonArray) {
+                    srcArr.asJsonArray.forEach { el ->
+                        if (!el.isJsonNull) sourcesList.add(el.asString)
+                    }
+                }
+
+                val formatted = buildString {
+                    if (!diseaseName.isNullOrBlank()) appendLine("🩺 Chẩn đoán: $diseaseName")
+                    if (!species.isNullOrBlank()) {
+                        val catLabel = if (category == "crop") "Cây trồng" else "Vật nuôi"
+                        appendLine("🌿/🐖 Đối tượng: $species ($catLabel)")
+                    }
+                    if (!text.isNullOrBlank()) appendLine("🔍 Mô tả: $text")
+                    appendLine("\n📋 Hướng dẫn xử lý:\n$answer")
+                    if (sourcesList.isNotEmpty()) append("\n📚 Nguồn: ${sourcesList.joinToString(", ")}")
+                }.trim()
+
+                return ChatMessage(
+                    id = UUID.randomUUID().toString(),
+                    sender = "agent",
+                    content = formatted,
+                    time = "Vừa xong",
+                    toolCalls = listOf(
+                        ToolCall(
+                            tool = "diagnose_agricultural_disease",
+                            args = emptyMap(),
+                            result = diseaseName ?: "Đã kiểm tra xong hình ảnh"
+                        )
+                    )
+                )
+            } else {
+                val errBody = res.errorBody()?.string()?.take(200) ?: res.message()
+                return ChatMessage(
+                    id = UUID.randomUUID().toString(),
+                    sender = "agent",
+                    content = "⚠️ Lỗi kiểm tra hình ảnh (${res.code()}): $errBody",
+                    time = "Vừa xong"
+                )
+            }
+        } catch (e: Exception) {
+            e.printStackTrace()
+            return ChatMessage(
+                id = UUID.randomUUID().toString(),
+                sender = "agent",
+                content = "⚠️ Không kết nối được tới máy chủ kiểm tra bệnh: ${e.localizedMessage ?: e.javaClass.simpleName}",
+                time = "Vừa xong"
+            )
+        }
+    }
+
+    suspend fun controlDeviceByName(deviceName: String, state: Boolean, penId: String): Boolean {
+        val action = if (state) "turn_on" else "turn_off"
+        return try {
+            val res = api.controlDevice(
+                mapOf(
+                    "pen_id" to penId,
+                    "device_name" to deviceName,
+                    "action" to action
+                )
+            )
+            res.isSuccessful
+        } catch (_: Exception) {
+            false
+        }
+    }
+
+    suspend fun getNewsfeedState(penId: String? = null, limit: Int = 12): NewsfeedState? {
+        return try {
+            val cleanPen = if (penId.isNullOrBlank() || penId == "all") null else penId
+            val res = api.getNewsfeed(penId = cleanPen, limit = limit)
+            if (res.isSuccessful && res.body() != null) {
+                parseNewsfeedState(res.body()!!)
+            } else null
+        } catch (_: Exception) {
+            null
+        }
+    }
+
+    fun parseNewsfeedState(body: com.google.gson.JsonObject): NewsfeedState {
+        val arr = body.getAsJsonArray("items")
+        val items = if (arr != null) parseNewsfeedArray(arr) else emptyList()
+        val summary = body.get("summary_text")?.takeIf { !it.isJsonNull }?.asString ?: ""
+        val briefing = body.get("briefing_text")?.takeIf { !it.isJsonNull }?.asString
+        val pending = body.get("pending_tasks_count")?.takeIf { !it.isJsonNull }?.asInt ?: 0
+        val lowStock = body.get("low_stock_count")?.takeIf { !it.isJsonNull }?.asInt ?: 0
+        val sick = body.get("sick_animals_count")?.takeIf { !it.isJsonNull }?.asInt ?: 0
+        return NewsfeedState(
+            summaryText = summary,
+            briefingText = briefing,
+            pendingTasksCount = pending,
+            lowStockCount = lowStock,
+            sickAnimalsCount = sick,
+            items = items
+        )
+    }
+
+    suspend fun getNewsfeed(penId: String? = null, limit: Int = 12): List<NewsfeedItem> {
+        return try {
+            val cleanPen = if (penId.isNullOrBlank() || penId == "all") null else penId
+            val res = api.getNewsfeed(penId = cleanPen, limit = limit)
+            if (res.isSuccessful && res.body() != null) {
+                val arr = res.body()!!.getAsJsonArray("items") ?: return emptyList()
+                parseNewsfeedArray(arr)
+            } else emptyList()
+        } catch (_: Exception) {
+            emptyList()
+        }
+    }
+
+    fun parseNewsfeedArray(arr: com.google.gson.JsonArray): List<NewsfeedItem> {
+        return arr.mapNotNull { el ->
+            if (!el.isJsonObject) return@mapNotNull null
+            val obj = el.asJsonObject
+            val quickApi = obj.get("quick_api")?.takeIf { it.isJsonObject }?.asJsonObject
+            val quickBody = quickApi?.get("body")?.takeIf { it.isJsonObject }?.asJsonObject
+            val quickDevType = quickBody?.get("device_type")?.takeIf { !it.isJsonNull }?.asString
+            val quickDevState = quickBody?.get("state")?.takeIf { !it.isJsonNull }?.asBoolean ?: true
+
+            NewsfeedItem(
+                id = obj.get("id")?.takeIf { !it.isJsonNull }?.asString ?: UUID.randomUUID().toString(),
+                title = obj.get("title")?.takeIf { !it.isJsonNull }?.asString ?: "Cập nhật trang trại",
+                summary = obj.get("summary")?.takeIf { !it.isJsonNull }?.asString ?: "",
+                category = obj.get("category")?.takeIf { !it.isJsonNull }?.asString ?: "info",
+                severity = obj.get("severity")?.takeIf { !it.isJsonNull }?.asString ?: "info",
+                penId = obj.get("pen_id")?.takeIf { !it.isJsonNull }?.asString,
+                targetType = obj.get("target_type")?.takeIf { !it.isJsonNull }?.asString,
+                targetId = obj.get("target_id")?.takeIf { !it.isJsonNull }?.asString,
+                timestamp = obj.get("timestamp")?.takeIf { !it.isJsonNull }?.asString ?: "",
+                actionLabel = obj.get("action_label")?.takeIf { !it.isJsonNull }?.asString ?: "Xử lý ngay",
+                actionRoute = obj.get("action_route")?.takeIf { !it.isJsonNull }?.asString ?: "chat",
+                isResolved = obj.get("is_resolved")?.takeIf { !it.isJsonNull }?.asBoolean ?: false,
+                quickDeviceType = quickDevType,
+                quickDeviceState = quickDevState
+            )
+        }
+    }
+
     suspend fun triggerDailyBriefing(): DailyBriefing {
         try {
             val res = api.triggerBriefing()
@@ -590,16 +886,29 @@ class FarmRepository(
         return emptyList()
     }
 
+    suspend fun configureCameraStream(penId: String, sourceUrl: String, streamType: String = "ipcam"): Boolean {
+        val cleanPenId = penId.trim()
+        val cleanSource = sourceUrl.trim()
+        return try {
+            val res = actionApi.configureCamera(
+                mapOf(
+                    "target_id" to cleanPenId,
+                    "source" to cleanSource,
+                    "stream_type" to streamType
+                )
+            )
+            res.isSuccessful
+        } catch (_: Exception) {
+            false
+        }
+    }
+
     suspend fun configurePenCamera(penId: String, sourceUrl: String): Boolean {
         val cleanPenId = penId.trim()
         val cleanSource = sourceUrl.trim()
         val dbOk = updatePenCamera(cleanPenId, cleanSource)
-        return try {
-            val res = actionApi.configureCamera(mapOf("target_id" to cleanPenId, "source" to cleanSource))
-            res.isSuccessful || dbOk
-        } catch (e: Exception) {
-            dbOk
-        }
+        val camOk = configureCameraStream(cleanPenId, cleanSource, "ipcam")
+        return camOk || dbOk
     }
 
     suspend fun stopPenCamera(penId: String): Boolean {

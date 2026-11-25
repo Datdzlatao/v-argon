@@ -4,8 +4,10 @@ import androidx.compose.animation.core.*
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material.icons.outlined.ThumbUp
@@ -17,9 +19,12 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.smartfarm.app.data.models.DailyBriefing
+import com.smartfarm.app.data.models.NewsfeedItem
 import com.smartfarm.app.ui.theme.*
 
 @Composable
@@ -29,6 +34,8 @@ fun MorningBriefingCard(
     onRefresh: () -> Unit,
     onOpenChat: () -> Unit,
     currentMode: String,
+    newsfeedItems: List<NewsfeedItem> = emptyList(),
+    onQuickAction: (NewsfeedItem) -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     var isLiked by remember { mutableStateOf(false) }
@@ -67,7 +74,8 @@ fun MorningBriefingCard(
             ) {
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(10.dp)
+                    horizontalArrangement = Arrangement.spacedBy(10.dp),
+                    modifier = Modifier.weight(1f)
                 ) {
                     Box(
                         modifier = Modifier
@@ -87,7 +95,7 @@ fun MorningBriefingCard(
                     Column {
                         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
                             Text(
-                                text = "Bản Tin Sáng Thông Minh",
+                                text = "Bản Tin & Quan Sát 24/7",
                                 style = MaterialTheme.typography.titleMedium,
                                 fontWeight = FontWeight.Bold,
                                 color = FarmForegroundLight
@@ -100,7 +108,7 @@ fun MorningBriefingCard(
                             )
                         }
                         Text(
-                            text = "07:00 Sáng • ${if (currentMode == "livestock") "Khu Chăn Nuôi" else "Khu Trồng Trọt"}",
+                            text = "THEO DÕI 24/7 • ${if (currentMode == "livestock") "Khu Chăn Nuôi" else "Khu Trồng Trọt"}",
                             style = MaterialTheme.typography.labelSmall,
                             color = FarmTextMutedLight
                         )
@@ -128,21 +136,29 @@ fun MorningBriefingCard(
 
             Spacer(modifier = Modifier.height(12.dp))
 
-            // Nội dung tóm tắt
+            // Nội dung tóm tắt (giới hạn chiều cao + cuộn mượt để không phình card)
             Surface(
                 shape = RoundedCornerShape(14.dp),
                 color = FarmMutedLight,
                 border = androidx.compose.foundation.BorderStroke(1.dp, FarmCardBorderLight),
-                modifier = Modifier.fillMaxWidth()
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .heightIn(max = 180.dp)
             ) {
-                Text(
-                    text = briefing?.content
-                        ?: "Hệ thống đang kiểm tra cảm biến chuồng trại và cập nhật lịch chăn nuôi. Bấm 'Làm Mới' để xem bản tin tổng hợp hôm nay.",
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = FarmForegroundLight,
-                    lineHeight = 22.sp,
-                    modifier = Modifier.padding(14.dp)
-                )
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .verticalScroll(rememberScrollState())
+                        .padding(14.dp)
+                ) {
+                    GeminiRichText(
+                        text = briefing?.content
+                            ?: "Hệ thống đang kiểm tra cảm biến chuồng trại và cập nhật lịch chăn nuôi. Bấm 'Làm Mới' để xem bản tin tổng hợp hôm nay.",
+                        isUser = false,
+                        fontSize = 13.sp,
+                        lineHeight = 20.sp
+                    )
+                }
             }
 
             Spacer(modifier = Modifier.height(12.dp))
@@ -153,20 +169,85 @@ fun MorningBriefingCard(
                 horizontalArrangement = Arrangement.spacedBy(6.dp)
             ) {
                 StatChip(
-                    label = "2 việc cần xử lý",
+                    label = "${briefing?.pendingTasksCount ?: 0} việc cần xử lý",
                     color = FarmInfo,
                     modifier = Modifier.weight(1f)
                 )
                 StatChip(
-                    label = "1 vật tư cần thêm",
+                    label = "${briefing?.lowStockCount ?: 0} vật tư cần thêm",
                     color = FarmWarning,
                     modifier = Modifier.weight(1f)
                 )
                 StatChip(
-                    label = "1 cá thể theo dõi",
+                    label = "${briefing?.sickAnimalsCount ?: 0} cá thể theo dõi",
                     color = FarmDestructive,
                     modifier = Modifier.weight(1f)
                 )
+            }
+
+            if (newsfeedItems.isNotEmpty()) {
+                Spacer(modifier = Modifier.height(10.dp))
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    newsfeedItems.take(3).forEach { item ->
+                        val isCritical = item.severity == "critical"
+                        val isWarning = item.severity == "warning"
+                        val bgColor = when {
+                            isCritical -> Color(0xFFFEF2F2)
+                            isWarning -> Color(0xFFFFFBEB)
+                            else -> Color(0xFFF8FAFC)
+                        }
+                        val borderColor = when {
+                            isCritical -> Color(0xFFFECACA)
+                            isWarning -> Color(0xFFFDE68A)
+                            else -> Color(0xFFE2E8F0)
+                        }
+                        val accentColor = when {
+                            isCritical -> Color(0xFFDC2626)
+                            isWarning -> Color(0xFFD97706)
+                            else -> FarmPrimary
+                        }
+                        Surface(
+                            shape = RoundedCornerShape(12.dp),
+                            color = bgColor,
+                            border = androidx.compose.foundation.BorderStroke(1.dp, borderColor),
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Column(
+                                modifier = Modifier.padding(10.dp),
+                                verticalArrangement = Arrangement.spacedBy(6.dp)
+                            ) {
+                                Text(
+                                    text = item.title,
+                                    fontSize = 12.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = FarmForegroundLight
+                                )
+                                GeminiRichText(
+                                    text = item.summary,
+                                    isUser = false,
+                                    fontSize = 11.5.sp,
+                                    lineHeight = 16.sp
+                                )
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.End
+                                ) {
+                                    Button(
+                                        onClick = { onQuickAction(item) },
+                                        shape = RoundedCornerShape(8.dp),
+                                        colors = ButtonDefaults.buttonColors(
+                                            containerColor = if (item.isResolved) FarmPrimary else accentColor
+                                        ),
+                                        contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp),
+                                        modifier = Modifier.height(30.dp)
+                                    ) {
+                                        Text(item.actionLabel, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
             }
 
             HorizontalDivider(modifier = Modifier.padding(vertical = 12.dp), color = FarmCardBorderLight)
@@ -231,7 +312,11 @@ fun StatChip(label: String, color: Color, modifier: Modifier = Modifier) {
             fontWeight = FontWeight.Bold,
             fontSize = 9.sp,
             maxLines = 1,
-            modifier = Modifier.padding(horizontal = 6.dp, vertical = 5.dp)
+            overflow = TextOverflow.Ellipsis,
+            textAlign = TextAlign.Center,
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 6.dp, vertical = 5.dp)
         )
     }
 }

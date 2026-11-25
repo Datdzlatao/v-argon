@@ -1,6 +1,7 @@
 import json
 import logging
 import sqlite3
+import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Optional
@@ -64,8 +65,9 @@ class ChatHistoryRepository:
     ) -> dict[str, Any]:
         """Save a chat message."""
         now_str = datetime.now(timezone.utc).isoformat()
+        clean_user = str(user_id).strip() or "guest"
         item = {
-            "user_id": str(user_id).strip(),
+            "user_id": clean_user,
             "pen_id": str(pen_id).strip() if pen_id else None,
             "sender": sender.strip(),
             "content": content.strip(),
@@ -73,15 +75,20 @@ class ChatHistoryRepository:
             "created_at": now_str,
         }
 
-        if self._supabase_available:
+        is_uuid_user = False
+        try:
+            uuid.UUID(clean_user)
+            is_uuid_user = True
+        except ValueError:
+            is_uuid_user = False
+
+        if self._supabase_available and is_uuid_user:
             try:
                 res = self.client.table(self._table).insert(item).execute()
                 if res.data and len(res.data) > 0:
                     return res.data[0]
             except Exception as e:
-                # If table doesn't exist, switch to local SQLite
                 logger.warning(f"Supabase chat insert error: {e}. Saving to local SQLite.")
-                self._supabase_available = False
 
         # Fallback to local SQLite
         try:
@@ -117,10 +124,17 @@ class ChatHistoryRepository:
         limit: int = 50,
     ) -> list[dict[str, Any]]:
         """Retrieve recent chat history for a user, optionally filtered by pen_id."""
-        clean_user = str(user_id).strip()
+        clean_user = str(user_id).strip() or "guest"
         clean_pen = str(pen_id).strip() if pen_id else None
 
-        if self._supabase_available:
+        is_uuid_user = False
+        try:
+            uuid.UUID(clean_user)
+            is_uuid_user = True
+        except ValueError:
+            is_uuid_user = False
+
+        if self._supabase_available and is_uuid_user:
             try:
                 query = (
                     self.client.table(self._table)
@@ -135,7 +149,6 @@ class ChatHistoryRepository:
                     return res.data
             except Exception as e:
                 logger.warning(f"Supabase chat query error: {e}. Querying local SQLite.")
-                self._supabase_available = False
 
         # Local SQLite fallback
         try:

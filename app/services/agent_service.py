@@ -1,3 +1,4 @@
+import asyncio
 import json
 import logging
 import re
@@ -47,6 +48,8 @@ class AIAgentService:
 
     def __init__(self):
         self.settings = get_settings()
+        self._mcp_ctx_cache: Optional[str] = None
+        self._mcp_ctx_cache_ts: float = 0.0
         self._genai_client = None
 
         if self.settings.is_gemini_configured:
@@ -60,7 +63,13 @@ class AIAgentService:
     def get_system_prompt_with_mcp_context(self) -> str:
         """
         Dynamically read MCP Resources to build the latest real-time context for the AI Agent.
+        Uses a 30s TTL cache to avoid 30+ redundant Supabase HTTP queries on consecutive chat turns.
         """
+        import time
+        now = time.monotonic()
+        if self._mcp_ctx_cache and (now - self._mcp_ctx_cache_ts) < 30.0:
+            return self._mcp_ctx_cache
+
         overview_ctx = get_farm_overview()
         pens_ctx = get_pens_list()
         env_ctx = get_latest_env_logs()
@@ -132,6 +141,8 @@ NHIỆM VỤ CỦA BẠN:
 - Khi người dùng hỏi về bệnh tật của vật nuôi (sốt, tai xanh, tiêu chảy PED, lở mồm long móng...) hoặc sâu bệnh cây trồng (đạo ôn, rầy nâu, sương mai...), bạn PHẢI gọi `search_agricultural_knowledge` hoặc `diagnose_agricultural_disease` để trích xuất phác đồ y tế chuẩn xác và hướng dẫn người dùng chi tiết, an tâm.
 - Luôn trả lời bằng tiếng Việt lịch sự, thân thiện, rõ ràng về mã chuồng thao tác.
 """
+        self._mcp_ctx_cache = prompt
+        self._mcp_ctx_cache_ts = now
         return prompt
 
     def _fallback_intent_engine(self, user_message: str) -> dict[str, Any]:
@@ -493,7 +504,9 @@ NHIỆM VỤ CỦA BẠN:
                 if turns:
                     recent_turns_text = "\n\nLỊCH SỬ TRÒ CHUYỆN GẦN ĐÂY VỚI NGƯỜI DÙNG:\n" + "\n".join(turns) + "\n"
 
-            system_instruction = self.get_system_prompt_with_mcp_context() + recent_turns_text
+            system_instruction = (
+                await asyncio.to_thread(self.get_system_prompt_with_mcp_context)
+            ) + recent_turns_text
 
             tools_list = [
                 transfer_animal_pen,
@@ -560,6 +573,117 @@ NHIỆM VỤ CỦA BẠN:
             res = self._fallback_intent_engine(user_message)
             res["reply"] += f"\n\n*(Lưu ý: Gemini API gặp lỗi [{str(e)}], hệ thống đã tự động xử lý qua Smart Farm Rule Engine)*"
             return res
+
+    async def chat_stream(self, user_message: str, history: Optional[list[dict[str, Any]]] = None):
+        """
+        Async generator streaming chat chunks from Gemini API in real time (SSE).
+        Falls back to rule engine if Gemini is unavailable.
+        """
+        yield {"type": "status", "text": "Đang kết nối Smart Farm AI..."}
+
+        if not self._genai_client:
+            res = self._fallback_intent_engine(user_message)
+            yield {"type": "chunk", "text": res["reply"]}
+            yield {"type": "done", "reply": res["reply"], "tool_calls": res.get("tool_calls", [])}
+            return
+
+        try:
+            import asyncio
+            from google.genai import types
+
+            recent_turns_text = ""
+            if history:
+                turns = []
+                for h in history[-6:]:
+                    role_label = "Người dùng" if h.get("sender") == "user" else "Trợ lý AI"
+                    turns.append(f"{role_label}: {h.get('content', '')}")
+                if turns:
+                    recent_turns_text = "\n\nLỊCH SỬ TRÒ CHUYỆN GẦN ĐÂY VỚI NGƯỜI DÙNG:\n" + "\n".join(turns) + "\n"
+
+            system_instruction = (
+                await asyncio.to_thread(self.get_system_prompt_with_mcp_context)
+            ) + recent_turns_text
+
+            tools_list = [
+                transfer_animal_pen,
+                get_pen_status,
+                manage_pen,
+                control_device,
+                log_feeding,
+                update_animal_health,
+                add_animal,
+                plant_crop,
+                manage_crop_quantity,
+                log_crop_growth,
+                log_crop_care,
+                update_crop_disease,
+                manage_inventory,
+                manage_schedule,
+                create_system_alert,
+                search_agricultural_knowledge,
+                diagnose_agricultural_disease,
+                get_staff_list,
+                check_in_staff_face,
+                get_today_attendance_summary,
+            ]
+
+            config = types.GenerateContentConfig(
+                system_instruction=system_instruction,
+                tools=tools_list,
+                temperature=0.2,
+            )
+
+            full_text_parts: list[str] = []
+            executed_tools: list[dict[str, Any]] = []
+
+            def _next_chunk(iterator):
+                try:
+                    return next(iterator), False
+                except StopIteration:
+                    return None, True
+
+            stream_iter = iter(
+                self._genai_client.models.generate_content_stream(
+                    model=self.settings.GEMINI_MODEL,
+                    contents=user_message,
+                    config=config,
+                )
+            )
+
+            while True:
+                chunk, done = await asyncio.to_thread(_next_chunk, stream_iter)
+                if done:
+                    break
+                if chunk is None:
+                    continue
+
+                if hasattr(chunk, "function_calls") and chunk.function_calls:
+                    for fc in chunk.function_calls:
+                        executed_tools.append({
+                            "tool": fc.name,
+                            "args": dict(fc.args) if fc.args else {},
+                        })
+
+                chunk_text = getattr(chunk, "text", None)
+                if chunk_text:
+                    full_text_parts.append(chunk_text)
+                    yield {"type": "chunk", "text": chunk_text}
+
+            reply_text = "".join(full_text_parts).strip() or "Yêu cầu trang trại đã được xử lý thành công."
+            if not full_text_parts:
+                yield {"type": "chunk", "text": reply_text}
+
+            yield {
+                "type": "done",
+                "reply": reply_text,
+                "tool_calls": executed_tools,
+            }
+        except Exception as e:
+            logger.error(f"Error streaming Gemini model: {e}. Switching to fallback engine.")
+            res = self._fallback_intent_engine(user_message)
+            res["reply"] += f"\n\n*(Lưu ý: Gemini API gặp lỗi [{str(e)}], hệ thống đã tự động xử lý qua Smart Farm Rule Engine)*"
+            yield {"type": "chunk", "text": res["reply"]}
+            yield {"type": "done", "reply": res["reply"], "tool_calls": res.get("tool_calls", [])}
 
     async def diagnose_multimodal(
         self,

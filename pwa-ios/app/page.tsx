@@ -21,8 +21,11 @@ import {
   Power,
   CheckCircle2,
   AlertTriangle,
+  ImagePlus,
+  X,
 } from 'lucide-react';
 import WebSocketStreamPlayer from '../components/WebSocketStreamPlayer';
+import GeminiMarkdown from '../components/GeminiMarkdown';
 import {
   WS_URL,
   PenItem,
@@ -37,6 +40,13 @@ import {
   stopFaceCamera,
   getFaceCameraLatest,
   sendAgentChat,
+  sendAgentChatStream,
+  getChatHistory,
+  fetchNewsfeedState,
+  executeNewsfeedQuickApi,
+  NewsfeedItem,
+  fileToBase64,
+  diagnoseDiseaseWithBase64,
 } from '../lib/api';
 
 type TabKey = 'home' | 'camera' | 'attendance' | 'chat';
@@ -64,6 +74,8 @@ export default function IosPwaPage() {
   const [pens, setPens] = useState<PenItem[]>([]);
   const [currentPenId, setCurrentPenId] = useState<string>('');
   const [env, setEnv] = useState<any>({});
+  const [newsfeedItems, setNewsfeedItems] = useState<NewsfeedItem[]>([]);
+  const [newsfeedSummary, setNewsfeedSummary] = useState<string>('');
   const [devices, setDevices] = useState<Record<string, boolean>>({});
   const [wsConnected, setWsConnected] = useState(false);
   const [isStandalone, setIsStandalone] = useState(true);
@@ -81,10 +93,17 @@ export default function IosPwaPage() {
   // Chat state
   const [chatInput, setChatInput] = useState('');
   const [isSendingChat, setIsSendingChat] = useState(false);
-  const [messages, setMessages] = useState<Array<{ sender: 'user' | 'agent'; text: string }>>([
-    { sender: 'agent', text: 'Xin chào! Tôi là Trợ lý Smart Farm AI. Bạn cần kiểm tra chuồng trại hay điều khiển thiết bị nào?' },
+  const [hasStreamChunk, setHasStreamChunk] = useState(false);
+  const [selectedImage, setSelectedImage] = useState<{
+    base64: string;
+    contentType: string;
+    dataUrl: string;
+  } | null>(null);
+  const [messages, setMessages] = useState<Array<{ sender: 'user' | 'agent'; text: string; imageUrl?: string; isStreaming?: boolean }>>([
+    { sender: 'agent', text: 'Xin chào! Tôi là Trợ lý Nông Trại. Bạn có thể nhắn tin hoặc gửi ảnh cây trồng/vật nuôi để kiểm tra bệnh.' },
   ]);
   const chatEndRef = useRef<HTMLDivElement | null>(null);
+  const chatFileInputRef = useRef<HTMLInputElement | null>(null);
 
   const currentPen = pens.find((p) => p.id === currentPenId) || pens[0];
 
@@ -121,7 +140,28 @@ export default function IosPwaPage() {
 
   useEffect(() => {
     loadDashboard(currentPenId || undefined);
+    if (currentPenId) {
+      getChatHistory('ios_pwa_user', currentPenId).then((hist) => {
+        if (hist && hist.length > 0) {
+          setMessages(hist.map((m: any) => ({ sender: m.sender, text: m.content })));
+        }
+      });
+    }
   }, [currentPenId]);
+
+  const syncNewsfeed = async () => {
+    const state = await fetchNewsfeedState(12);
+    if (state) {
+      setNewsfeedItems(state.items || []);
+      if (state.summary_text) setNewsfeedSummary(state.summary_text);
+    }
+  };
+
+  useEffect(() => {
+    syncNewsfeed();
+    const timer = setInterval(syncNewsfeed, 10000);
+    return () => clearInterval(timer);
+  }, []);
 
   // Realtime Farm WebSocket
   useEffect(() => {
@@ -144,6 +184,30 @@ export default function IosPwaPage() {
                 ...prev,
                 [pkt.data.device_type]: Boolean(pkt.data.status),
               }));
+              fetchNewsfeedState(12).then((s) => {
+                if (s) {
+                  setNewsfeedItems(s.items || []);
+                  if (s.summary_text) setNewsfeedSummary(s.summary_text);
+                }
+              });
+            } else if (pkt.event === 'newsfeed_update' && pkt.data?.items) {
+              setNewsfeedItems(pkt.data.items);
+              if (pkt.data.summary_text) setNewsfeedSummary(pkt.data.summary_text);
+            } else if (pkt.event === 'chat_message' && pkt.data) {
+              const d = pkt.data;
+              if ((!d.user_id || d.user_id === 'ios_pwa_user') && d.content) {
+                setMessages((prev) => {
+                  const exists = prev.some((m) => m.sender === d.sender && m.text === d.content);
+                  return exists ? prev : [...prev, { sender: d.sender, text: d.content }];
+                });
+              }
+            } else if (pkt.event === 'alert') {
+              fetchNewsfeedState(12).then((s) => {
+                if (s) {
+                  setNewsfeedItems(s.items || []);
+                  if (s.summary_text) setNewsfeedSummary(s.summary_text);
+                }
+              });
             }
           } catch {}
         };
@@ -221,19 +285,131 @@ export default function IosPwaPage() {
     }
   };
 
+  const handleChatImagePick = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    e.target.value = '';
+    if (!file) return;
+    try {
+      const encoded = await fileToBase64(file);
+      setSelectedImage(encoded);
+    } catch {
+      setMessages((prev) => [...prev, { sender: 'agent', text: 'Không đọc được file ảnh đã chọn.' }]);
+    }
+  };
+
+  const handleChatPaste = async (e: React.ClipboardEvent<HTMLInputElement>) => {
+    const items = e.clipboardData?.items;
+    if (!items) return;
+    for (let i = 0; i < items.length; i++) {
+      const item = items[i];
+      if (item.type.startsWith('image/')) {
+        const file = item.getAsFile();
+        if (file) {
+          e.preventDefault();
+          try {
+            const encoded = await fileToBase64(file);
+            setSelectedImage(encoded);
+          } catch {
+            setMessages((prev) => [...prev, { sender: 'agent', text: 'Không đọc được ảnh từ clipboard.' }]);
+          }
+          break;
+        }
+      }
+    }
+  };
+
   const handleSendChat = async () => {
     const text = chatInput.trim();
-    if (!text || isSendingChat) return;
+    const imageToSend = selectedImage;
+    if ((!text && !imageToSend) || isSendingChat) return;
     setChatInput('');
-    setMessages((prev) => [...prev, { sender: 'user', text }]);
+    setSelectedImage(null);
+    setMessages((prev) => [
+      ...prev,
+      {
+        sender: 'user',
+        text: text || '📷 Gửi ảnh kiểm tra bệnh',
+        imageUrl: imageToSend?.dataUrl,
+      },
+    ]);
     setIsSendingChat(true);
+    setHasStreamChunk(false);
+
+    const animateReveal = async (fullText: string) => {
+      setHasStreamChunk(true);
+      let msgIdx = -1;
+      setMessages((prev) => {
+        msgIdx = prev.length;
+        return [...prev, { sender: 'agent', text: '', isStreaming: true }];
+      });
+      const tokens = fullText.split(/(\s+)/);
+      let acc = '';
+      const step = Math.max(1, Math.ceil(tokens.length / 45));
+      for (let i = 0; i < tokens.length; i += step) {
+        acc += tokens.slice(i, i + step).join('');
+        setMessages((prev) => prev.map((m, idx) => (idx === msgIdx ? { ...m, text: acc } : m)));
+        await new Promise((r) => setTimeout(r, 18));
+      }
+      setMessages((prev) =>
+        prev.map((m, idx) => (idx === msgIdx ? { ...m, text: fullText, isStreaming: false } : m))
+      );
+    };
+
     try {
-      const res = await sendAgentChat(text, currentPenId || undefined);
-      setMessages((prev) => [...prev, { sender: 'agent', text: res.reply || 'Đã xử lý.' }]);
+      if (imageToSend) {
+        const diag = await diagnoseDiseaseWithBase64(
+          imageToSend.base64,
+          text || 'Phân tích và chẩn đoán hình ảnh nông nghiệp này giúp tôi',
+          imageToSend.contentType,
+          currentPenId || undefined,
+          'ios_pwa_user'
+        );
+        const replyText = [
+          diag.disease_name ? `🩺 Chẩn đoán: ${diag.disease_name}` : null,
+          diag.species ? `🌿/🐖 Đối tượng: ${diag.species} (${diag.category === 'crop' ? 'Cây trồng' : 'Vật nuôi'})` : null,
+          diag.text ? `🔍 Mô tả: ${diag.text}` : null,
+          `\n📋 Hướng dẫn xử lý:\n${diag.answer}`,
+          diag.sources?.length ? `\n📚 Nguồn: ${diag.sources.join(', ')}` : null,
+        ]
+          .filter(Boolean)
+          .join('\n');
+        await animateReveal(replyText);
+      } else {
+        let accumulated = '';
+        let msgIdx = -1;
+        await sendAgentChatStream(text, currentPenId || undefined, {
+          onChunk: (delta) => {
+            accumulated += delta;
+            if (msgIdx === -1) {
+              setHasStreamChunk(true);
+              setMessages((prev) => {
+                msgIdx = prev.length;
+                return [...prev, { sender: 'agent', text: accumulated, isStreaming: true }];
+              });
+            } else {
+              setMessages((prev) =>
+                prev.map((m, idx) => (idx === msgIdx ? { ...m, text: accumulated } : m))
+              );
+            }
+          },
+          onDone: (fullReply) => {
+            const finalText = fullReply || accumulated || 'Đã xử lý.';
+            if (msgIdx === -1) {
+              setHasStreamChunk(true);
+              setMessages((prev) => [...prev, { sender: 'agent', text: finalText, isStreaming: false }]);
+            } else {
+              setMessages((prev) =>
+                prev.map((m, idx) => (idx === msgIdx ? { ...m, text: finalText, isStreaming: false } : m))
+              );
+            }
+          },
+        });
+      }
     } catch {
-      setMessages((prev) => [...prev, { sender: 'agent', text: 'Không kết nối được tới máy chủ AI.' }]);
+      setMessages((prev) => [...prev, { sender: 'agent', text: 'Không kết nối được tới máy chủ trợ lý.' }]);
     } finally {
       setIsSendingChat(false);
+      setHasStreamChunk(false);
       setTimeout(() => chatEndRef.current?.scrollIntoView({ behavior: 'smooth' }), 100);
     }
   };
@@ -301,7 +477,7 @@ export default function IosPwaPage() {
       </header>
 
       {/* Main Content */}
-      <main className="flex-1 px-4 pt-3 pb-28 space-y-4 max-w-2xl w-full mx-auto">
+      <main className="flex-1 min-w-0 overflow-x-hidden px-4 pt-3 pb-28 space-y-4 max-w-2xl w-full mx-auto">
         {/* iOS Add to Home Screen Banner (when opened in Safari) */}
         {!isStandalone && (
           <div className="bg-white rounded-2xl p-3.5 shadow-sm border border-black/5 flex items-center gap-3">
@@ -310,8 +486,8 @@ export default function IosPwaPage() {
             </div>
             <div className="text-[12px] leading-snug text-slate-600">
               <strong className="text-slate-900 block">Cài đặt như App iPhone:</strong>
-              Bấm nút <strong>Chia sẻ (Share)</strong> ở thanh dưới Safari → chọn{' '}
-              <strong>Thêm vào MH chính (Add to Home Screen)</strong>.
+              Bấm nút <strong>Chia sẻ</strong> ở thanh dưới Safari → chọn{' '}
+              <strong>Thêm vào màn hình chính</strong>.
             </div>
           </div>
         )}
@@ -319,6 +495,84 @@ export default function IosPwaPage() {
         {/* TAB 1: HOME */}
         {activeTab === 'home' && (
           <>
+            {/* Live Observer News Feed */}
+            <section>
+              <div className="flex items-center justify-between px-1 mb-2">
+                <h2 className="text-[13px] font-semibold uppercase tracking-wide text-slate-500">
+                  Bản tin quan sát trực tiếp
+                </h2>
+                <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-800">
+                  ĐANG ĐỒNG BỘ
+                </span>
+              </div>
+              {newsfeedSummary && (
+                <div className="bg-white rounded-2xl p-3.5 shadow-sm border border-emerald-200 text-[13px] text-slate-800 mb-2 max-h-40 overflow-y-auto break-words">
+                  <GeminiMarkdown text={newsfeedSummary} />
+                </div>
+              )}
+              {newsfeedItems.length === 0 ? (
+                <div className="bg-white rounded-2xl p-3.5 shadow-sm text-[13px] text-emerald-800 flex items-center gap-2">
+                  <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+                  <span>Hệ thống quan sát ổn định, chưa có cảnh báo mới.</span>
+                </div>
+              ) : (
+                <div className="space-y-2">
+                  {newsfeedItems.slice(0, 4).map((item) => {
+                    const isCrit = item.severity === 'critical';
+                    const isWarn = item.severity === 'warning';
+                    return (
+                      <div
+                        key={item.id}
+                        className={`rounded-2xl p-3 shadow-sm border ${
+                          isCrit
+                            ? 'bg-rose-50 border-rose-200'
+                            : isWarn
+                            ? 'bg-amber-50 border-amber-200'
+                            : 'bg-white border-black/5'
+                        }`}
+                      >
+                        <div className="flex items-start justify-between gap-2">
+                          <div className="min-w-0">
+                            <p className="text-[13px] font-bold text-slate-900">{item.title}</p>
+                            <p className="text-[12px] text-slate-600 mt-0.5 leading-snug">{item.summary}</p>
+                          </div>
+                          <button
+                            onClick={async () => {
+                              if (item.pen_id && item.pen_id !== currentPenId) {
+                                setCurrentPenId(item.pen_id);
+                              }
+                              if (item.quick_api) {
+                                await executeNewsfeedQuickApi(item.quick_api.endpoint, item.quick_api.body).catch(() => {});
+                                syncNewsfeed();
+                              } else if (item.action_route === 'camera') {
+                                setActiveTab('camera');
+                              } else if (item.action_route === 'devices' || item.action_route === 'env') {
+                                setActiveTab('home');
+                              } else {
+                                setActiveTab('chat');
+                                if (item.target_id) {
+                                  setChatInput(`Kiểm tra chi tiết ${item.target_id} tại ${item.title}`);
+                                }
+                              }
+                            }}
+                            className={`shrink-0 px-2.5 py-1.5 rounded-xl text-[11px] font-bold text-white ${
+                              item.is_resolved
+                                ? 'bg-emerald-600'
+                                : isCrit
+                                ? 'bg-rose-600'
+                                : 'bg-emerald-600'
+                            }`}
+                          >
+                            {item.action_label}
+                          </button>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </section>
+
             <section>
               <h2 className="text-[13px] font-semibold uppercase tracking-wide text-slate-500 px-1 mb-2">
                 Môi trường chuồng trại
@@ -560,30 +814,94 @@ export default function IosPwaPage() {
                   className={`flex ${m.sender === 'user' ? 'justify-end' : 'justify-start'}`}
                 >
                   <div
-                    className={`max-w-[82%] px-3.5 py-2.5 rounded-2xl text-[14px] leading-relaxed ${
+                    className={`max-w-[82%] min-w-0 break-words overflow-hidden px-3.5 py-2.5 rounded-2xl text-[14px] leading-relaxed whitespace-pre-wrap ${
                       m.sender === 'user'
                         ? 'bg-emerald-600 text-white rounded-br-sm'
                         : 'bg-white text-slate-800 shadow-sm rounded-bl-sm'
                     }`}
                   >
-                    {m.text}
+                    {m.imageUrl && (
+                      <img
+                        src={m.imageUrl}
+                        alt="Ảnh kiểm chứng"
+                        className="w-full max-h-48 object-cover rounded-xl mb-2"
+                      />
+                    )}
+                    <GeminiMarkdown
+                      text={m.text}
+                      isUser={m.sender === 'user'}
+                      isStreaming={Boolean(m.isStreaming)}
+                    />
                   </div>
                 </div>
               ))}
+              {isSendingChat && !hasStreamChunk && (
+                <div className="flex justify-start">
+                  <div className="w-[78%] bg-white rounded-2xl rounded-bl-sm px-3.5 py-3 shadow-sm space-y-2 border border-emerald-100">
+                    <div className="flex items-center gap-1.5 text-[12px] font-medium text-emerald-700">
+                      <Sparkles className="w-3.5 h-3.5 animate-spin" />
+                      <span>Trợ lý đang suy nghĩ...</span>
+                    </div>
+                    <div className="space-y-1.5 animate-pulse">
+                      <div className="h-2.5 rounded-full bg-gradient-to-r from-emerald-200 via-teal-100 to-emerald-200 w-11/12" />
+                      <div className="h-2.5 rounded-full bg-gradient-to-r from-emerald-100 via-teal-200 to-emerald-100 w-3/4" />
+                    </div>
+                  </div>
+                </div>
+              )}
               <div ref={chatEndRef} />
             </div>
 
-            <div className="flex items-center gap-2 bg-white rounded-full p-1.5 pl-4 shadow-sm border border-black/5">
+            {selectedImage && (
+              <div className="flex items-center justify-between gap-2 bg-emerald-50 border border-emerald-200 rounded-2xl px-3 py-2">
+                <div className="flex items-center gap-2 min-w-0">
+                  <img
+                    src={selectedImage.dataUrl}
+                    alt="Xem trước"
+                    className="w-11 h-11 rounded-xl object-cover border border-emerald-300 shrink-0"
+                  />
+                  <span className="text-[12px] text-emerald-800 font-medium truncate">
+                    Ảnh đã sẵn sàng gửi kiểm tra bệnh
+                  </span>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setSelectedImage(null)}
+                  className="w-7 h-7 rounded-full bg-white text-slate-500 flex items-center justify-center border border-black/10 shrink-0"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+            )}
+
+            <div className="flex items-center gap-2 bg-white rounded-full p-1.5 pl-2 shadow-sm border border-black/5">
+              <input
+                ref={chatFileInputRef}
+                type="file"
+                accept="image/*"
+                onChange={handleChatImagePick}
+                className="hidden"
+              />
+              <button
+                type="button"
+                onClick={() => chatFileInputRef.current?.click()}
+                disabled={isSendingChat}
+                className="w-9 h-9 rounded-full bg-emerald-50 text-emerald-700 flex items-center justify-center shrink-0 disabled:opacity-40"
+                title="Chọn hoặc chụp ảnh để kiểm tra bệnh"
+              >
+                <ImagePlus className="w-4 h-4" />
+              </button>
               <input
                 value={chatInput}
                 onChange={(e) => setChatInput(e.target.value)}
                 onKeyDown={(e) => e.key === 'Enter' && handleSendChat()}
-                placeholder="Nhắn cho Smart Farm AI..."
+                onPaste={handleChatPaste}
+                placeholder={selectedImage ? 'Mô tả thêm triệu chứng...' : 'Nhắn tin hoặc dán ảnh vào đây...'}
                 className="flex-1 bg-transparent text-[15px] outline-none"
               />
               <button
                 onClick={handleSendChat}
-                disabled={isSendingChat || !chatInput.trim()}
+                disabled={isSendingChat || (!chatInput.trim() && !selectedImage)}
                 className="w-9 h-9 rounded-full bg-emerald-600 text-white flex items-center justify-center disabled:opacity-40"
               >
                 <Send className="w-4 h-4" />

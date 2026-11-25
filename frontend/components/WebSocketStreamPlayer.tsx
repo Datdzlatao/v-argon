@@ -191,8 +191,8 @@ export default function WebSocketStreamPlayer({
           <div className="absolute top-2.5 right-2.5 flex items-center gap-1.5 pointer-events-none">
             <div className="bg-emerald-950/80 border border-emerald-600/60 backdrop-blur px-2 py-0.5 rounded-lg text-[10px] text-emerald-300 font-mono flex items-center gap-1.5 shadow-sm">
               <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-ping" />
-              <span>⚡ WSS Zero-Lag</span>
-              {fps > 0 && <span className="text-emerald-200 font-bold">• {fps} FPS</span>}
+              <span>⚡ Kết nối trực tiếp</span>
+              {fps > 0 && <span className="text-emerald-200 font-bold">• {fps} ảnh/giây</span>}
             </div>
 
             {cooldownText && (
