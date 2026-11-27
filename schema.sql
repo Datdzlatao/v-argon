@@ -171,8 +171,10 @@ CREATE TABLE IF NOT EXISTS public.chat_messages (
 );
 
 -- Phân hệ Quản Lý Nhân Sự & Điểm Danh FaceID (Standalone AI Vision Engine)
+CREATE SEQUENCE IF NOT EXISTS public.staff_id_seq START 1;
+
 CREATE TABLE IF NOT EXISTS public.staff (
-    id TEXT PRIMARY KEY,
+    id TEXT PRIMARY KEY DEFAULT nextval('public.staff_id_seq')::TEXT,
     name TEXT NOT NULL,
     role TEXT DEFAULT 'Kỹ thuật viên',
     pen_id TEXT REFERENCES public.pens(id) ON DELETE SET NULL,

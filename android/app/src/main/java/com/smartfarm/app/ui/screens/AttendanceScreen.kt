@@ -122,7 +122,7 @@ fun AttendanceScreen(
 
                 Spacer(modifier = Modifier.height(12.dp))
 
-                // Thanh điều hướng tab
+                // Thanh điều hướng tab (chỉ Lịch Sử Ra Vào & Danh Sách Nhân Sự)
                 TabRow(
                     selectedTabIndex = activeTab,
                     containerColor = Color.Transparent,
@@ -133,9 +133,9 @@ fun AttendanceScreen(
                         onClick = { activeTab = 0 },
                         text = {
                             Row(verticalAlignment = Alignment.CenterVertically) {
-                                Icon(Icons.Default.Face, contentDescription = null, modifier = Modifier.size(15.dp))
+                                Icon(Icons.Default.History, contentDescription = null, modifier = Modifier.size(15.dp))
                                 Spacer(modifier = Modifier.width(4.dp))
-                                Text("Quét Mặt", fontWeight = FontWeight.Bold, fontSize = 11.sp)
+                                Text("Lịch Sử Ra Vào", fontWeight = FontWeight.Bold, fontSize = 12.sp)
                             }
                         }
                     )
@@ -144,20 +144,9 @@ fun AttendanceScreen(
                         onClick = { activeTab = 1 },
                         text = {
                             Row(verticalAlignment = Alignment.CenterVertically) {
-                                Icon(Icons.Default.History, contentDescription = null, modifier = Modifier.size(15.dp))
-                                Spacer(modifier = Modifier.width(4.dp))
-                                Text("Lịch Sử", fontWeight = FontWeight.Bold, fontSize = 11.sp)
-                            }
-                        }
-                    )
-                    Tab(
-                        selected = activeTab == 2,
-                        onClick = { activeTab = 2 },
-                        text = {
-                            Row(verticalAlignment = Alignment.CenterVertically) {
                                 Icon(Icons.Default.People, contentDescription = null, modifier = Modifier.size(15.dp))
                                 Spacer(modifier = Modifier.width(4.dp))
-                                Text("Nhân Sự", fontWeight = FontWeight.Bold, fontSize = 11.sp)
+                                Text("Danh Sách Nhân Sự", fontWeight = FontWeight.Bold, fontSize = 12.sp)
                             }
                         }
                     )
@@ -168,19 +157,6 @@ fun AttendanceScreen(
         // Nội dung theo Tab
         when (activeTab) {
             0 -> {
-                FaceScanAndCheckInView(
-                    isFaceCamActive = isFaceCamActive,
-                    faceTelemetry = faceTelemetry,
-                    staffList = staffList,
-                    onStartCam = { viewModel.startFaceCamera("0") },
-                    onStopCam = { viewModel.stopFaceCamera() },
-                    onManualCheckIn = { id, name, type, note ->
-                        viewModel.checkInStaff(id, name, type, note)
-                    }
-                )
-            }
-
-            1 -> {
                 val filteredHistory = remember(attendanceHistory, filterType, searchQuery) {
                     attendanceHistory.filter { record ->
                         val matchesType = when (filterType) {
@@ -206,7 +182,7 @@ fun AttendanceScreen(
                 )
             }
 
-            2 -> {
+            else -> {
                 val filteredStaff = remember(staffList, searchQuery) {
                     if (searchQuery.isBlank()) staffList
                     else staffList.filter {
@@ -573,13 +549,6 @@ fun StaffListView(
                                 style = MaterialTheme.typography.labelSmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
-                            if (!staff.phone.isNullOrBlank()) {
-                                Text(
-                                    text = "Số điện thoại: ${staff.phone}",
-                                    style = MaterialTheme.typography.labelSmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                                )
-                            }
                         }
 
                         Surface(
@@ -757,24 +726,29 @@ fun EnrollFaceDialog(
     onEnroll: (String, String, String, ByteArray, ByteArray?, ByteArray?) -> Unit
 ) {
     val context = LocalContext.current
-    var staffId by remember { mutableStateOf("") }
     var staffName by remember { mutableStateOf("") }
     var role by remember { mutableStateOf("Kỹ thuật viên") }
     var uriThang by remember { mutableStateOf<Uri?>(null) }
     var uriTrai by remember { mutableStateOf<Uri?>(null) }
     var uriPhai by remember { mutableStateOf<Uri?>(null) }
+    var errorMsg by remember { mutableStateOf<String?>(null) }
 
-    val pickThang = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uriThang = it }
+    val pickThang = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uriThang = it; errorMsg = null }
     val pickTrai = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uriTrai = it }
     val pickPhai = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uriPhai = it }
 
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("Đăng Ký Khuôn Mặt (eKYC)", fontWeight = FontWeight.Bold, fontSize = 16.sp) },
+        title = { Text("Thêm Khuôn Mặt Nhân Sự Mới", fontWeight = FontWeight.Bold, fontSize = 16.sp) },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                OutlinedTextField(value = staffId, onValueChange = { staffId = it }, label = { Text("Mã NV (VD: NV05)") }, singleLine = true)
-                OutlinedTextField(value = staffName, onValueChange = { staffName = it }, label = { Text("Họ và tên") }, singleLine = true)
+                Text(
+                    "Mã nhân viên sẽ tự động tăng trong Database.",
+                    fontSize = 11.sp,
+                    color = FarmPrimary,
+                    fontWeight = FontWeight.Medium
+                )
+                OutlinedTextField(value = staffName, onValueChange = { staffName = it; errorMsg = null }, label = { Text("Họ và tên") }, singleLine = true)
                 OutlinedTextField(value = role, onValueChange = { role = it }, label = { Text("Chức vụ") }, singleLine = true)
                 Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                     OutlinedButton(onClick = { pickThang.launch("image/*") }, modifier = Modifier.weight(1f)) {
@@ -787,17 +761,32 @@ fun EnrollFaceDialog(
                         Text(if (uriPhai != null) "✓ Phải" else "Nghiêng Phải", fontSize = 11.sp)
                     }
                 }
+                if (!errorMsg.isNullOrBlank()) {
+                    Text(errorMsg!!, color = FarmDestructive, fontSize = 12.sp, fontWeight = FontWeight.Medium)
+                }
             }
         },
         confirmButton = {
             Button(
                 onClick = {
-                    val b1 = uriThang?.let { context.contentResolver.openInputStream(it)?.use { s -> s.readBytes() } }
-                    if (staffId.isNotBlank() && staffName.isNotBlank() && b1 != null) {
-                        val b2 = uriTrai?.let { context.contentResolver.openInputStream(it)?.use { s -> s.readBytes() } }
-                        val b3 = uriPhai?.let { context.contentResolver.openInputStream(it)?.use { s -> s.readBytes() } }
-                        onEnroll(staffId, staffName, role, b1, b2, b3)
+                    if (staffName.isBlank()) {
+                        errorMsg = "Vui lòng nhập Họ và tên."
+                        return@Button
                     }
+                    if (uriThang == null) {
+                        errorMsg = "Vui lòng chọn ít nhất Ảnh Thẳng."
+                        return@Button
+                    }
+                    val b1 = try {
+                        context.contentResolver.openInputStream(uriThang!!)?.use { s -> s.readBytes() }
+                    } catch (_: Exception) { null }
+                    if (b1 == null || b1.isEmpty()) {
+                        errorMsg = "Không thể đọc file ảnh đã chọn."
+                        return@Button
+                    }
+                    val b2 = try { uriTrai?.let { context.contentResolver.openInputStream(it)?.use { s -> s.readBytes() } } } catch (_: Exception) { null }
+                    val b3 = try { uriPhai?.let { context.contentResolver.openInputStream(it)?.use { s -> s.readBytes() } } } catch (_: Exception) { null }
+                    onEnroll("", staffName, role, b1, b2, b3)
                 },
                 colors = ButtonDefaults.buttonColors(containerColor = FarmPrimary)
             ) {

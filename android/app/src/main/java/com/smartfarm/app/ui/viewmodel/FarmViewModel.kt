@@ -1097,9 +1097,9 @@ class FarmViewModel(
         phaiBytes: ByteArray? = null
     ) {
         viewModelScope.launch {
-            val ok = repository.enrollStaffFace(staffId, name, role, _currentPenId.value, thangBytes, traiBytes, phaiBytes)
+            val (_, msg) = repository.enrollStaffFace(staffId, name, role, _currentPenId.value, thangBytes, traiBytes, phaiBytes)
             loadStaff()
-            showToast(if (ok) "✅ Đã đăng ký khuôn mặt cho $name" else "⚠️ Đã lưu nhân sự, lỗi trích xuất khuôn mặt")
+            showToast(msg)
         }
     }
 

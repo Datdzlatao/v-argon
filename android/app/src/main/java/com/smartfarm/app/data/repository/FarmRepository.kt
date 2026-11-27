@@ -26,6 +26,7 @@ class FarmRepository(
     val authClient: SupabaseAuthClient = SupabaseAuthClient()
 ) {
     private val gson = Gson()
+    private val directClient: OkHttpClient
     private val api: FarmApiService
     private val faceApi: FaceApiService
     private val actionApi: ActionApiService
@@ -61,6 +62,7 @@ class FarmRepository(
             .writeTimeout(30, TimeUnit.SECONDS)
             .addInterceptor(logging)
             .build()
+        directClient = okHttpClient
 
         val backendRetrofit = Retrofit.Builder()
             .baseUrl(ApiConfig.backendUrl)
@@ -1031,33 +1033,126 @@ class FarmRepository(
         ))
     }
 
+    private fun compressFaceJpeg(rawBytes: ByteArray, maxDim: Int = 1280): ByteArray {
+        return try {
+            val opts = android.graphics.BitmapFactory.Options().apply { inJustDecodeBounds = true }
+            android.graphics.BitmapFactory.decodeByteArray(rawBytes, 0, rawBytes.size, opts)
+            val w = opts.outWidth
+            val h = opts.outHeight
+            if (w <= 0 || h <= 0) return rawBytes
+            var sample = 1
+            while (w / sample > maxDim * 2 || h / sample > maxDim * 2) sample *= 2
+            val decOpts = android.graphics.BitmapFactory.Options().apply { inSampleSize = sample }
+            val bmp = android.graphics.BitmapFactory.decodeByteArray(rawBytes, 0, rawBytes.size, decOpts) ?: return rawBytes
+            val longest = maxOf(bmp.width, bmp.height)
+            val scaled = if (longest > maxDim) {
+                val scale = maxDim.toFloat() / longest.toFloat()
+                android.graphics.Bitmap.createScaledBitmap(
+                    bmp,
+                    (bmp.width * scale).toInt().coerceAtLeast(1),
+                    (bmp.height * scale).toInt().coerceAtLeast(1),
+                    true
+                )
+            } else bmp
+            val baos = java.io.ByteArrayOutputStream()
+            scaled.compress(android.graphics.Bitmap.CompressFormat.JPEG, 88, baos)
+            if (scaled !== bmp) bmp.recycle()
+            bmp.recycle()
+            baos.toByteArray()
+        } catch (_: Exception) {
+            rawBytes
+        }
+    }
+
     suspend fun enrollStaffFace(
-        staffId: String,
+        staffId: String = "",
         name: String,
         role: String,
         penId: String,
         thangBytes: ByteArray,
         traiBytes: ByteArray? = null,
         phaiBytes: ByteArray? = null
-    ): Boolean {
-        val cleanId = staffId.trim().uppercase()
-        supabase.upsert("staff", "id", mapOf(
-            "id" to cleanId,
-            "name" to name.trim(),
-            "role" to role.trim(),
-            "pen_id" to penId.ifBlank { "123" }
-        ))
-        return try {
-            val idBody = cleanId.toRequestBody("text/plain".toMediaTypeOrNull())
-            val nameBody = name.trim().toRequestBody("text/plain".toMediaTypeOrNull())
-            val p1 = MultipartBody.Part.createFormData("file_thang", "thang.jpg", thangBytes.toRequestBody("image/jpeg".toMediaTypeOrNull()))
-            val p2 = traiBytes?.let { MultipartBody.Part.createFormData("file_nghieng_trai", "trai.jpg", it.toRequestBody("image/jpeg".toMediaTypeOrNull())) }
-            val p3 = phaiBytes?.let { MultipartBody.Part.createFormData("file_nghieng_phai", "phai.jpg", it.toRequestBody("image/jpeg".toMediaTypeOrNull())) }
-            val res = faceApi.enrollFace(idBody, nameBody, p1, p2, p3)
-            res.isSuccessful
+    ): Pair<Boolean, String> {
+        val cleanId = staffId.trim()
+        val cleanName = name.trim()
+        val cleanRole = role.trim().ifBlank { "Kỹ thuật viên" }
+        val cleanPen = penId.ifBlank { "123" }
+
+        val cThang = compressFaceJpeg(thangBytes)
+        val cTrai = traiBytes?.let { compressFaceJpeg(it) }
+        val cPhai = phaiBytes?.let { compressFaceJpeg(it) }
+
+        // 1. Tự động tăng ID nhân viên từ bảng staff (nếu không nhập tay) và lưu lên Supabase
+        val resolvedId = if (cleanId.isNotEmpty()) cleanId else {
+            val existing = try { getStaffList() } catch (_: Exception) { emptyList() }
+            val maxNum = existing.mapNotNull { it.id.trim().toIntOrNull() }.maxOrNull() ?: 0
+            (maxNum + 1).toString()
+        }
+        try {
+            supabase.upsert("staff", "id", mapOf(
+                "id" to resolvedId,
+                "name" to cleanName,
+                "role" to cleanRole,
+                "pen_id" to cleanPen
+            ))
         } catch (e: Exception) {
-            e.printStackTrace()
-            false
+            Log.w("FarmRepository", "Supabase staff upsert warning: ${e.message}")
+        }
+
+        // 2. Gọi trực tiếp Tailscale Face AI Engine (:10000/api/v1/faces/enroll)
+        val faceUrl = "${ApiConfig.faceApiUrl.trimEnd('/')}/api/v1/faces/enroll"
+        val directResult = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+            try {
+                val mb = MultipartBody.Builder().setType(MultipartBody.FORM)
+                    .addFormDataPart("student_id", resolvedId)
+                    .addFormDataPart("student_name", cleanName)
+                if (cTrai != null && cPhai != null) {
+                    mb.addFormDataPart("file_thang", "${resolvedId}_thang.jpg", cThang.toRequestBody("image/jpeg".toMediaTypeOrNull()))
+                    mb.addFormDataPart("file_nghieng_trai", "${resolvedId}_nghieng_trai.jpg", cTrai.toRequestBody("image/jpeg".toMediaTypeOrNull()))
+                    mb.addFormDataPart("file_nghieng_phai", "${resolvedId}_nghieng_phai.jpg", cPhai.toRequestBody("image/jpeg".toMediaTypeOrNull()))
+                } else {
+                    mb.addFormDataPart("file", "${resolvedId}_thang.jpg", cThang.toRequestBody("image/jpeg".toMediaTypeOrNull()))
+                }
+                val req = okhttp3.Request.Builder().url(faceUrl).post(mb.build()).build()
+                directClient.newCall(req).execute().use { resp ->
+                    val bodyStr = resp.body?.string() ?: ""
+                    if (resp.isSuccessful) {
+                        true to "✅ Đã thêm khuôn mặt $cleanName (ID: $resolvedId) vào known_faces"
+                    } else {
+                        val detail = try {
+                            com.google.gson.JsonParser.parseString(bodyStr).asJsonObject.get("detail")?.asString
+                        } catch (_: Exception) { null } ?: bodyStr.ifBlank { "HTTP ${resp.code}" }
+                        if (resp.code in 400..499) {
+                            false to "⚠️ $detail"
+                        } else {
+                            null
+                        }
+                    }
+                }
+            } catch (e: Exception) {
+                Log.w("FarmRepository", "Direct Face API (:10000) error: ${e.message}")
+                null
+            }
+        }
+        if (directResult != null) return directResult
+
+        // 3. Fallback qua Backend (:8443/api/staff/enroll)
+        return try {
+            val idBody = resolvedId.toRequestBody("text/plain".toMediaTypeOrNull())
+            val nameBody = cleanName.toRequestBody("text/plain".toMediaTypeOrNull())
+            val roleBody = cleanRole.toRequestBody("text/plain".toMediaTypeOrNull())
+            val penBody = cleanPen.toRequestBody("text/plain".toMediaTypeOrNull())
+            val p1 = MultipartBody.Part.createFormData("file_thang", "thang.jpg", cThang.toRequestBody("image/jpeg".toMediaTypeOrNull()))
+            val p2 = cTrai?.let { MultipartBody.Part.createFormData("file_nghieng_trai", "trai.jpg", it.toRequestBody("image/jpeg".toMediaTypeOrNull())) }
+            val p3 = cPhai?.let { MultipartBody.Part.createFormData("file_nghieng_phai", "phai.jpg", it.toRequestBody("image/jpeg".toMediaTypeOrNull())) }
+            val res = api.enrollStaffFace(idBody, nameBody, roleBody, penBody, p1, p2, p3)
+            if (res.isSuccessful) {
+                true to "✅ Đã thêm khuôn mặt $cleanName (ID: $resolvedId)"
+            } else {
+                false to "⚠️ Lỗi đăng ký khuôn mặt (${res.code()}): ${res.errorBody()?.string() ?: ""}"
+            }
+        } catch (e: Exception) {
+            false to "⚠️ Không thể kết nối API Face (:10000) hoặc Backend (:8443): ${e.message}"
         }
     }
 }

@@ -1,3 +1,5 @@
+import { supabase } from './supabase';
+
 const isLocalBrowser =
   typeof window !== 'undefined' &&
   (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1');
@@ -404,6 +406,10 @@ export async function updatePenMetadataAPI(
 
 export async function getStaffList(): Promise<any[]> {
   try {
+    const { data, error } = await supabase.from('staff').select('*').order('id');
+    if (!error && data && data.length > 0) return data;
+  } catch {}
+  try {
     const res = await fetch(`${BACKEND_URL}/api/staff`, { cache: 'no-store' });
     if (res.ok) return await res.json();
   } catch {}
@@ -411,6 +417,14 @@ export async function getStaffList(): Promise<any[]> {
 }
 
 export async function getStaffAttendanceHistory(limit = 30): Promise<any[]> {
+  try {
+    const { data, error } = await supabase
+      .from('staff_attendance')
+      .select('*')
+      .order('created_at', { ascending: false })
+      .limit(limit);
+    if (!error && data) return data;
+  } catch {}
   try {
     const res = await fetch(`${BACKEND_URL}/api/staff/attendance?limit=${limit}`, { cache: 'no-store' });
     if (res.ok) return await res.json();
@@ -441,7 +455,7 @@ export async function checkInStaff(payload: {
 }
 
 export async function enrollStaffFace(opts: {
-  staffId: string;
+  staffId?: string;
   staffName: string;
   role: string;
   penId: string;
@@ -450,7 +464,9 @@ export async function enrollStaffFace(opts: {
   filePhai?: File | null;
 }): Promise<any> {
   const formData = new FormData();
-  formData.append('staff_id', opts.staffId.trim().toUpperCase());
+  if (opts.staffId && opts.staffId.trim()) {
+    formData.append('staff_id', opts.staffId.trim().toUpperCase());
+  }
   formData.append('staff_name', opts.staffName.trim());
   formData.append('role', opts.role || 'Kỹ thuật viên');
   formData.append('pen_id', opts.penId || '123');
@@ -461,15 +477,59 @@ export async function enrollStaffFace(opts: {
   } else {
     formData.append('file', opts.fileThang);
   }
-  const res = await fetch(`${BACKEND_URL}/api/staff/enroll`, {
-    method: 'POST',
-    body: formData,
-  });
-  if (!res.ok) {
+  try {
+    const res = await fetch(`${BACKEND_URL}/api/staff/enroll`, {
+      method: 'POST',
+      body: formData,
+    });
+    if (res.ok) return res.json();
     const err = await res.json().catch(() => ({}));
-    throw new Error(err.detail || `Enroll error ${res.status}`);
+    if (res.status >= 400 && res.status < 500) {
+      throw new Error(err.detail || `Enroll error ${res.status}`);
+    }
+  } catch (e: any) {
+    if (e?.message && !e.message.includes('Failed to fetch') && !e.message.includes('NetworkError')) {
+      throw e;
+    }
   }
-  return res.json();
+
+  // Fallback gọi trực tiếp Tailscale Face AI Engine (:10000/api/v1/faces/enroll)
+  let resolvedId = (opts.staffId || '').trim().toUpperCase();
+  if (!resolvedId) {
+    const { data: rows } = await supabase.from('staff').select('id');
+    const maxNum = (rows || []).reduce((m: number, r: any) => {
+      const n = /^\d+$/.test(String(r.id || '').trim()) ? Number(r.id) : 0;
+      return Math.max(m, n);
+    }, 0);
+    resolvedId = String(maxNum + 1);
+  }
+  await supabase.from('staff').upsert({
+    id: resolvedId,
+    name: opts.staffName.trim(),
+    role: opts.role || 'Kỹ thuật viên',
+    pen_id: opts.penId || '123',
+  }, { onConflict: 'id' });
+
+  const faceFd = new FormData();
+  faceFd.append('student_id', resolvedId);
+  faceFd.append('student_name', opts.staffName.trim());
+  if (opts.fileThang && opts.fileTrai && opts.filePhai) {
+    faceFd.append('file_thang', opts.fileThang);
+    faceFd.append('file_nghieng_trai', opts.fileTrai);
+    faceFd.append('file_nghieng_phai', opts.filePhai);
+  } else {
+    faceFd.append('file', opts.fileThang);
+  }
+  const faceRes = await fetch(`${FACE_API_URL}/api/v1/faces/enroll`, {
+    method: 'POST',
+    body: faceFd,
+  });
+  if (!faceRes.ok) {
+    const err = await faceRes.json().catch(() => ({}));
+    throw new Error(err.detail || `Face AI error ${faceRes.status}`);
+  }
+  const json = await faceRes.json();
+  return { ...json, staff: { id: resolvedId, name: opts.staffName.trim() } };
 }
 
 export async function triggerOfficeSummaryAPI(targetDate?: string, userId?: string | null): Promise<any> {
@@ -483,11 +543,28 @@ export async function triggerOfficeSummaryAPI(targetDate?: string, userId?: stri
 }
 
 export async function updateStaffWageAPI(staffId: string, dailyWage: number): Promise<any> {
-  const res = await fetch(`${BACKEND_URL}/api/staff/${encodeURIComponent(staffId)}/wage`, {
-    method: 'PATCH',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ daily_wage: dailyWage }),
-  });
-  if (!res.ok) throw new Error(`Update wage error ${res.status}`);
-  return res.json();
+  const wageInt = Math.max(0, Math.round(dailyWage));
+  let supaData: any = null;
+  try {
+    const { data, error } = await supabase
+      .from('staff')
+      .update({ daily_wage: wageInt })
+      .eq('id', staffId)
+      .select()
+      .single();
+    if (!error && data) supaData = data;
+  } catch {}
+
+  try {
+    const res = await fetch(`${BACKEND_URL}/api/staff/${encodeURIComponent(staffId)}/wage`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ daily_wage: wageInt }),
+    });
+    if (res.ok) return await res.json();
+    if (!supaData) throw new Error(`Update wage error ${res.status}`);
+  } catch (err) {
+    if (!supaData) throw err;
+  }
+  return { status: 'success', staff: supaData };
 }

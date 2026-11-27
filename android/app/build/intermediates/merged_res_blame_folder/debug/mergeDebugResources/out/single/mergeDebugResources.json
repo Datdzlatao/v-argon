@@ -52,8 +52,8 @@
         "source": "/home/dat/.gradle/daemon/8.7/com.smartfarm.app-main-66:/drawable/ic_launcher_background.xml"
     },
     {
-        "merged": "com.smartfarm.app-debug-64:/xml_network_security_config.xml.flat",
-        "source": "com.smartfarm.app-main-66:/xml/network_security_config.xml"
+        "merged": "com.smartfarm.app-debug-64:/drawable_ic_launcher_foreground.xml.flat",
+        "source": "com.smartfarm.app-main-66:/drawable/ic_launcher_foreground.xml"
     },
     {
         "merged": "/home/dat/.gradle/daemon/8.7/com.smartfarm.app-debug-64:/mipmap-xxxhdpi_ic_launcher_round.png.flat",

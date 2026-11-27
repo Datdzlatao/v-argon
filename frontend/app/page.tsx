@@ -24,6 +24,7 @@ import FeedPenCamera from '../components/FeedPenCamera';
 import FeedLivestockCrops from '../components/FeedLivestockCrops';
 import FeedInventory from '../components/FeedInventory';
 import FeedExtendedModules from '../components/FeedExtendedModules';
+import QrScannerModal, { ParsedCropQr } from '../components/QrScannerModal';
 import MessengerChatBubble from '../components/MessengerChatBubble';
 import LandingIntro from '../components/LandingIntro';
 import {
@@ -102,6 +103,7 @@ export default function Home() {
   const [activeAlerts, setActiveAlerts] = useState<Record<string, string[]>>({});
   const [isMuted, setIsMuted] = useState(false);
   const [dismissedAlert, setDismissedAlert] = useState(false);
+  const [showQrScanner, setShowQrScanner] = useState(false);
   const alarmSoundRef = useRef<HTMLAudioElement | null>(null);
 
   // Messenger Floating State
@@ -1110,6 +1112,7 @@ export default function Home() {
         unreadAlertsCount={alertList.length}
         wsConnected={wsConnected}
         onTriggerBriefing={handleTriggerBriefing}
+        onOpenQrScanner={() => setShowQrScanner(true)}
       />
 
       {/* 1.5 Top Dashboard Tab Bar */}
@@ -1171,6 +1174,23 @@ export default function Home() {
           <FeedExtendedModules
             penName="Toàn Trang Trại"
             userId={activeUserId}
+            onQuickAccessCrop={async (cropId, penId) => {
+              let targetPen = penId;
+              if (!targetPen && cropId) {
+                try {
+                  const { data } = await supabase.from('crops').select('pen_id,name').eq('id', cropId).maybeSingle();
+                  if (data?.pen_id) targetPen = String(data.pen_id);
+                } catch {}
+              }
+              setCurrentMode('cultivation');
+              setDashboardTab('home');
+              if (targetPen) {
+                setCurrentPenId(targetPen);
+                currentPenIdRef.current = targetPen;
+                loadPenData(targetPen);
+              }
+              showRealtimeNotification('crops', `Đã truy cập nhanh cây trồng #${cropId}`);
+            }}
           />
         </div>
       ) : (
@@ -1645,6 +1665,35 @@ export default function Home() {
           showRealtimeNotification('crop_care_logs', `Đã xóa ghi chép chăm sóc`);
         }}
       />
+      <QrScannerModal
+        isOpen={showQrScanner}
+        onClose={() => setShowQrScanner(false)}
+        onDetected={async (parsed: ParsedCropQr) => {
+          setShowQrScanner(false);
+          if (parsed.cropId) {
+            let targetPen = parsed.penId;
+            let cropName = `#${parsed.cropId}`;
+            try {
+              const { data } = await supabase.from('crops').select('pen_id,name').eq('id', parsed.cropId).maybeSingle();
+              if (data?.pen_id && !targetPen) targetPen = String(data.pen_id);
+              if (data?.name) cropName = data.name;
+            } catch {}
+            setCurrentMode('cultivation');
+            setDashboardTab('home');
+            if (targetPen) {
+              setCurrentPenId(targetPen);
+              currentPenIdRef.current = targetPen;
+              loadPenData(targetPen);
+            }
+            showRealtimeNotification('crops', `Đã quét QR: ${cropName}`);
+          } else if (parsed.raw.startsWith('http')) {
+            window.open(parsed.raw, '_blank', 'noopener,noreferrer');
+          } else {
+            showRealtimeNotification('qr', `Đã quét mã QR: ${parsed.raw}`);
+          }
+        }}
+      />
+
       {/* 5. Live Realtime Notification Toast (F5-Free Instant Sync) */}
       {realtimeToast && (
         <div className="fixed bottom-6 left-6 z-50 bg-slate-900/95 backdrop-blur text-white text-xs px-4 py-3 rounded-2xl shadow-2xl border border-emerald-500/60 flex items-center gap-3 animate-in fade-in slide-in-from-bottom-4 duration-200 max-w-sm">

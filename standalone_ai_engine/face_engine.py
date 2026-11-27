@@ -8,6 +8,7 @@ import re
 import cv2
 import time
 import queue
+import unicodedata
 import urllib.request
 import threading
 import numpy as np
@@ -118,9 +119,24 @@ class FaceEngine:
             self.detector.setInputSize((w, h))
             self.current_input_size = (w, h)
 
+    @staticmethod
+    def _resize_max_dim(img_bgr: np.ndarray, max_dim: int = 1280) -> np.ndarray:
+        """Downscale huge mobile photos so YuNet runs fast and reliably."""
+        if img_bgr is None or img_bgr.size == 0:
+            return img_bgr
+        h, w = img_bgr.shape[:2]
+        longest = max(h, w)
+        if longest <= max_dim:
+            return img_bgr
+        scale = max_dim / float(longest)
+        new_w = max(1, int(round(w * scale)))
+        new_h = max(1, int(round(h * scale)))
+        return cv2.resize(img_bgr, (new_w, new_h), interpolation=cv2.INTER_AREA)
+
     def extract_embedding_from_image(self, img_bgr: np.ndarray) -> Optional[np.ndarray]:
         if img_bgr is None or img_bgr.size == 0:
             return None
+        img_bgr = self._resize_max_dim(img_bgr, 1280)
         h, w = img_bgr.shape[:2]
         self._update_detector_size(w, h)
         _, faces = self.detector.detect(img_bgr)
@@ -232,8 +248,10 @@ class FaceEngine:
 
     @staticmethod
     def _sanitize_token(value: str, fallback: str = "") -> str:
-        """Sanitize identifier/suffix tokens to prevent path traversal."""
-        cleaned = re.sub(r"[^a-zA-Z0-9_-]", "", str(value or "").strip().replace(" ", "_"))
+        """Transliterate Vietnamese & sanitize identifier/suffix tokens to prevent path traversal."""
+        raw = str(value or "").strip().replace("đ", "d").replace("Đ", "D")
+        normalized = unicodedata.normalize("NFKD", raw).encode("ascii", "ignore").decode("ascii")
+        cleaned = re.sub(r"[^a-zA-Z0-9_-]", "", normalized.replace(" ", "_"))
         return cleaned or fallback
 
     def _safe_face_path(self, filename: str) -> str:
@@ -246,6 +264,7 @@ class FaceEngine:
         return target
 
     def register_face(self, student_id: str, student_name: str, image_bgr: np.ndarray, save_disk: bool = True, suffix: str = "") -> bool:
+        image_bgr = self._resize_max_dim(image_bgr, 1280)
         emb = self.extract_embedding_from_image(image_bgr)
         if emb is None:
             return False
@@ -295,9 +314,9 @@ class FaceEngine:
             return {"success": False, "error": "Mã nhân sự không hợp lệ."}
 
         angles = {
-            "thang": img_thang,
-            "nghieng_trai": img_nghieng_trai,
-            "nghieng_phai": img_nghieng_phai
+            "thang": self._resize_max_dim(img_thang, 1280),
+            "nghieng_trai": self._resize_max_dim(img_nghieng_trai, 1280),
+            "nghieng_phai": self._resize_max_dim(img_nghieng_phai, 1280)
         }
 
         # 1. Kiểm tra trích xuất đặc trưng của cả 3 ảnh
@@ -401,8 +420,11 @@ class FaceEngine:
                         has_other_identity = True
                         break
 
-                # Đạt ngưỡng cosine_threshold và (không có người khác trong DB hoặc vượt qua khoảng cách margin_threshold)
-                if top1_sim >= self.cosine_threshold and (not has_other_identity or (top1_sim - top2_sim >= self.margin_threshold)):
+                # Đạt ngưỡng cosine_threshold; chỉ áp dụng margin_threshold khi độ tin cậy ở vùng biên (< 0.55)
+                # (tránh trường hợp cùng 1 người được đăng ký nhiều ID khiến top1 - top2 < 0.08 bị báo Người lạ dù sim = 1.0)
+                strong_match = top1_sim >= max(self.cosine_threshold + 0.12, 0.54)
+                margin_ok = not has_other_identity or (top1_sim - top2_sim >= self.margin_threshold)
+                if top1_sim >= self.cosine_threshold and (strong_match or margin_ok):
                     best_id = top1_id
                     best_name = self.known_names[top1_idx]
                     best_sim = top1_sim

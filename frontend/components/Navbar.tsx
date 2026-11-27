@@ -15,6 +15,7 @@ import {
   CheckCircle2,
   Sun,
   PawPrint,
+  QrCode,
 } from 'lucide-react';
 
 interface NavbarProps {
@@ -32,6 +33,7 @@ interface NavbarProps {
   unreadAlertsCount: number;
   wsConnected?: boolean;
   onTriggerBriefing?: () => void;
+  onOpenQrScanner?: () => void;
 }
 
 export default function Navbar({
@@ -49,6 +51,7 @@ export default function Navbar({
   unreadAlertsCount,
   wsConnected = false,
   onTriggerBriefing,
+  onOpenQrScanner,
 }: NavbarProps) {
   const [showNotifications, setShowNotifications] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
@@ -149,6 +152,19 @@ export default function Navbar({
             >
               <Sun className="w-3.5 h-3.5 shrink-0" />
               <span>Bản Tin Sáng</span>
+            </button>
+          )}
+
+          {/* External QR Scanner button */}
+          {onOpenQrScanner && (
+            <button
+              type="button"
+              onClick={onOpenQrScanner}
+              title="Quét mã QR cây trồng để truy cập nhanh"
+              className="inline-flex items-center gap-1.5 px-2.5 sm:px-3 py-1.5 rounded-xl bg-emerald-50 hover:bg-emerald-100 border border-emerald-200 text-emerald-800 text-xs font-bold transition whitespace-nowrap cursor-pointer shrink-0"
+            >
+              <QrCode className="w-4 h-4 shrink-0" />
+              <span className="hidden sm:inline">Quét QR</span>
             </button>
           )}
 

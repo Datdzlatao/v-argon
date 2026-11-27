@@ -115,18 +115,29 @@ class StaffRepository:
                 return s
         return None
 
+    def get_next_staff_id(self) -> str:
+        """Compute next auto-incrementing numeric staff ID as string ('1', '2', ...)."""
+        max_num = 0
+        for row in self.list_all():
+            raw = str(row.get("id") or "").strip()
+            if raw.isdigit():
+                max_num = max(max_num, int(raw))
+        return str(max_num + 1)
+
     def create_staff(
         self,
-        staff_id: str,
-        name: str,
+        staff_id: Optional[str] = None,
+        name: str = "",
         role: str = "Kỹ thuật viên",
         pen_id: str = "123",
         phone: Optional[str] = None,
         avatar_url: Optional[str] = None,
         daily_wage: float = 300000,
     ) -> dict[str, Any]:
-        """Register a new staff member."""
-        clean_id = staff_id.strip()
+        """Register a new staff member. Auto-generates numeric ID if staff_id is empty."""
+        clean_id = (staff_id or "").strip()
+        if not clean_id:
+            clean_id = self.get_next_staff_id()
         data = {
             "id": clean_id,
             "name": name.strip(),

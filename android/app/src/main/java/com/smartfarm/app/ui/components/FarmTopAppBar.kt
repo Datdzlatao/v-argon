@@ -32,7 +32,8 @@ fun FarmTopAppBar(
     onToggleMute: () -> Unit,
     userEmail: String?,
     onLogout: () -> Unit,
-    onOpenExtendedModules: () -> Unit = {}
+    onOpenExtendedModules: () -> Unit = {},
+    onOpenQrScanner: () -> Unit = {}
 ) {
     var showMenu by remember { mutableStateOf(false) }
 
@@ -108,6 +109,21 @@ fun FarmTopAppBar(
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(6.dp)
                 ) {
+                    // Nút Quét mã QR cây trồng ở ngoài
+                    IconButton(
+                        onClick = onOpenQrScanner,
+                        modifier = Modifier
+                            .size(38.dp)
+                            .clip(CircleShape)
+                            .background(FarmPrimary.copy(alpha = 0.10f))
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.QrCodeScanner,
+                            contentDescription = "Quét QR",
+                            tint = FarmPrimary,
+                            modifier = Modifier.size(20.dp)
+                        )
+                    }
                     // Nút mở Quản Lý Chung (Thu Chi, Office, Nhân Sự, QR, Giá)
                     IconButton(
                         onClick = onOpenExtendedModules,

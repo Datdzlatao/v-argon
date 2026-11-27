@@ -38,8 +38,9 @@ interface FaceApiService {
     @POST("/api/v1/faces/enroll")
     suspend fun enrollFace(
         @Part("student_id") studentId: RequestBody,
-        @Part("name") name: RequestBody,
-        @Part fileThang: MultipartBody.Part,
+        @Part("student_name") studentName: RequestBody,
+        @Part file: MultipartBody.Part? = null,
+        @Part fileThang: MultipartBody.Part? = null,
         @Part fileTrai: MultipartBody.Part? = null,
         @Part filePhai: MultipartBody.Part? = null
     ): Response<JsonObject>

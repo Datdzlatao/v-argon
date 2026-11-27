@@ -51,6 +51,8 @@ fun MainAppScaffold(viewModel: FarmViewModel) {
     val activeAlerts by viewModel.activeAlerts.collectAsState()
     val isMuted by viewModel.isMuted.collectAsState()
     val userSession by viewModel.userSession.collectAsState()
+    val currentPenId by viewModel.currentPenId.collectAsState()
+    var showQrScanner by remember { mutableStateOf(false) }
     val realtimeToast by viewModel.realtimeToast.collectAsState()
 
     val snackbarHostState = remember { SnackbarHostState() }
@@ -96,7 +98,8 @@ fun MainAppScaffold(viewModel: FarmViewModel) {
                     onToggleMute = { viewModel.toggleMute() },
                     userEmail = userSession?.email,
                     onLogout = { viewModel.logout() },
-                    onOpenExtendedModules = { navigateToTab(Screen.ExtendedModules.route) }
+                    onOpenExtendedModules = { navigateToTab(Screen.ExtendedModules.route) },
+                    onOpenQrScanner = { showQrScanner = true }
                 )
             }
         },
@@ -160,7 +163,18 @@ fun MainAppScaffold(viewModel: FarmViewModel) {
             }
 
             composable(Screen.ExtendedModules.route) {
-                ExtendedModulesScreen(onBack = { navController.popBackStack() })
+                ExtendedModulesScreen(
+                    onBack = { navController.popBackStack() },
+                    onEnrollFace = { name, role, b1, b2, b3 ->
+                        viewModel.enrollStaffFace("", name, role, b1, b2, b3)
+                    },
+                    onQuickAccessCrop = { cropId, penId ->
+                        viewModel.setMode("cultivation")
+                        if (!penId.isNullOrBlank()) viewModel.selectPen(penId)
+                        viewModel.showToast("🌱 Đã mở cây trồng #$cropId")
+                        navigateToTab(Screen.LivestockCrops.route)
+                    }
+                )
             }
 
             composable(Screen.AIChat.route) {
@@ -170,5 +184,24 @@ fun MainAppScaffold(viewModel: FarmViewModel) {
                 )
             }
         }
+    }
+
+    if (showQrScanner) {
+        com.smartfarm.app.ui.components.QrScannerDialog(
+            onDismiss = { showQrScanner = false },
+            onDetected = { parsed ->
+                showQrScanner = false
+                if (!parsed.cropId.isNullOrBlank()) {
+                    viewModel.setMode("cultivation")
+                    if (!parsed.penId.isNullOrBlank()) {
+                        viewModel.selectPen(parsed.penId)
+                    }
+                    viewModel.showToast("🌱 Đã quét QR cây trồng #${parsed.cropId}")
+                    navigateToTab(Screen.LivestockCrops.route)
+                } else {
+                    viewModel.showToast("📷 Đã quét QR: ${parsed.raw}")
+                }
+            }
+        )
     }
 }

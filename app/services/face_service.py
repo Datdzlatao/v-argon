@@ -21,6 +21,39 @@ class FaceVisionService:
     def base_url(self) -> str:
         return self.settings.VISION_ENGINE_URL.rstrip("/")
 
+    def _candidate_urls(self) -> list[str]:
+        urls = [self.base_url]
+        if "127.0.0.1:8001" not in self.base_url and "localhost:8001" not in self.base_url:
+            urls.append("http://127.0.0.1:8001")
+        return urls
+
+    def _post_enroll_multipart(self, full_body: bytes, boundary: str, timeout: int = 30) -> Optional[dict]:
+        """Try enrolling against configured VISION_ENGINE_URL and local 127.0.0.1:8001."""
+        for base in self._candidate_urls():
+            url = f"{base}/api/v1/faces/enroll"
+            try:
+                req = urllib.request.Request(
+                    url,
+                    data=full_body,
+                    headers={"Content-Type": f"multipart/form-data; boundary={boundary}"},
+                    method="POST"
+                )
+                with urllib.request.urlopen(req, timeout=timeout) as resp:
+                    if resp.status == 200:
+                        return json.loads(resp.read().decode("utf-8"))
+            except urllib.error.HTTPError as he:
+                err_body = he.read().decode("utf-8", errors="replace")
+                try:
+                    err_json = json.loads(err_body)
+                    detail = err_json.get("detail") or err_json.get("message") or err_body
+                except Exception:
+                    detail = err_body
+                logger.warning(f"AI Vision enroll HTTP {he.code} at {url}: {detail}")
+                return {"status": "error", "code": he.code, "message": detail}
+            except Exception as e:
+                logger.warning(f"Error enrolling face at {url}: {e}")
+        return None
+
     def check_health(self) -> dict:
         """Check if standalone AI engine is online."""
         url = f"{self.base_url}/api/v1/health"
@@ -191,22 +224,14 @@ class FaceVisionService:
 
         full_body = b"".join(body_parts)
 
-        try:
-            req = urllib.request.Request(
-                url,
-                data=full_body,
-                headers={"Content-Type": f"multipart/form-data; boundary={boundary}"},
-                method="POST"
-            )
-            with urllib.request.urlopen(req, timeout=10) as resp:
-                if resp.status == 200:
-                    return json.loads(resp.read().decode("utf-8"))
-        except Exception as e:
-            logger.warning(f"Error enrolling face at {url}: {e}")
+        remote_res = self._post_enroll_multipart(full_body, boundary, timeout=30)
+        if remote_res is not None:
+            return remote_res
 
-        # Local fallback enrollment directly to disk if possible
+        # Local fallback enrollment directly to disk if AI Vision Engine is offline
         try:
             import os
+            import re
             import cv2
             import numpy as np
             arr = np.frombuffer(image_bytes, dtype=np.uint8)
@@ -214,8 +239,10 @@ class FaceVisionService:
             if img is not None:
                 faces_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "..", "standalone_ai_engine", "known_faces")
                 os.makedirs(faces_dir, exist_ok=True)
-                clean_name = staff_name.replace(" ", "_")
-                out_path = os.path.join(faces_dir, f"{staff_id}_{clean_name}.jpg")
+                clean_id = re.sub(r"[^a-zA-Z0-9_-]", "", staff_id.strip()) or "0"
+                clean_name = re.sub(r"[^a-zA-Z0-9_-]", "", staff_name.strip().replace(" ", "_"))
+                out_fn = f"{clean_id}_{clean_name}_thang.jpg" if clean_name else f"{clean_id}_thang.jpg"
+                out_path = os.path.join(faces_dir, out_fn)
                 cv2.imwrite(out_path, img)
                 return {"status": "success", "message": f"Đã lưu ảnh nhân sự {staff_name} vào {out_path}", "local_fallback": True}
         except Exception as fe:
@@ -258,31 +285,24 @@ class FaceVisionService:
 
         full_body = b"".join(body_parts)
 
-        try:
-            req = urllib.request.Request(
-                url,
-                data=full_body,
-                headers={"Content-Type": f"multipart/form-data; boundary={boundary}"},
-                method="POST"
-            )
-            with urllib.request.urlopen(req, timeout=15) as resp:
-                if resp.status == 200:
-                    return json.loads(resp.read().decode("utf-8"))
-        except Exception as e:
-            logger.warning(f"Error enrolling 3-angle faces at {url}: {e}")
+        remote_res = self._post_enroll_multipart(full_body, boundary, timeout=30)
+        if remote_res is not None:
+            return remote_res
 
-        # Local fallback enrollment directly to disk
+        # Local fallback enrollment directly to disk if AI Vision Engine is offline
         try:
-            import os, cv2, numpy as np
+            import os, re, cv2, numpy as np
             faces_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "..", "standalone_ai_engine", "known_faces")
             os.makedirs(faces_dir, exist_ok=True)
-            clean_name = staff_name.replace(" ", "_")
+            clean_id = re.sub(r"[^a-zA-Z0-9_-]", "", staff_id.strip()) or "0"
+            clean_name = re.sub(r"[^a-zA-Z0-9_-]", "", staff_name.strip().replace(" ", "_"))
 
             for ang, b in [("thang", thang_bytes), ("nghieng_trai", trai_bytes), ("nghieng_phai", phai_bytes)]:
                 arr = np.frombuffer(b, dtype=np.uint8)
                 img = cv2.imdecode(arr, cv2.IMREAD_COLOR)
                 if img is not None:
-                    out_path = os.path.join(faces_dir, f"{staff_id}_{clean_name}_{ang}.jpg")
+                    out_fn = f"{clean_id}_{clean_name}_{ang}.jpg" if clean_name else f"{clean_id}_{ang}.jpg"
+                    out_path = os.path.join(faces_dir, out_fn)
                     cv2.imwrite(out_path, img)
 
             return {

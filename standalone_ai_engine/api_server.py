@@ -47,7 +47,8 @@ _cors_origins = [o.strip() for o in _raw_origins.split(",") if o.strip()]
 app.add_middleware(
     CORSMiddleware,
     allow_origins=_cors_origins,
-    allow_credentials="*" not in _cors_origins,
+    allow_origin_regex=r"https?://(localhost|127\.0\.0\.1|.*\.ts\.net)(:\d+)?",
+    allow_credentials=True,
     allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
     allow_headers=["*"],
 )

@@ -155,9 +155,11 @@ const DEFAULT_QRS: ProductVideoQr[] = [
 export default function FeedExtendedModules({
   penName,
   userId,
+  onQuickAccessCrop,
 }: {
   penName: string;
   userId?: string | null;
+  onQuickAccessCrop?: (cropId: string, penId?: string) => void;
 }) {
   const [tab, setTab] = useState<ModuleTab>('finance');
   const [dbSynced, setDbSynced] = useState<boolean>(false);
@@ -196,6 +198,15 @@ export default function FeedExtendedModules({
   const [staffWages, setStaffWages] = useState<StaffWageItem[]>([]);
   const [todayAttLogs, setTodayAttLogs] = useState<any[]>([]);
   const [wageDrafts, setWageDrafts] = useState<Record<string, string>>({});
+  const [workDaysDrafts, setWorkDaysDrafts] = useState<Record<string, number>>(() => {
+    if (typeof window === 'undefined') return {};
+    try {
+      const raw = localStorage.getItem(`smartfarm_workdays_${userId || 'demo'}`);
+      return raw ? JSON.parse(raw) : {};
+    } catch {
+      return {};
+    }
+  });
   const [savingWageId, setSavingWageId] = useState<string | null>(null);
   const [leaveStaff, setLeaveStaff] = useState('');
   const [leaveReason, setLeaveReason] = useState('');
@@ -205,13 +216,36 @@ export default function FeedExtendedModules({
   const [quotaTarget, setQuotaTarget] = useState('');
   const [quotaUnit, setQuotaUnit] = useState('kg');
 
-  // Form & Edit states — QR Video
-  const [qrProduct, setQrProduct] = useState('');
-  const [qrLot, setQrLot] = useState('');
-  const [qrVideoUrl, setQrVideoUrl] = useState('');
+  // Form & Edit states — QR Cây Trồng (Truy cập nhanh)
+  const [cropsList, setCropsList] = useState<Array<{ id: string | number; name: string; pen_id?: string; quantity?: number; status?: string }>>([]);
+  const [selectedQrCropId, setSelectedQrCropId] = useState<string>('');
   const [qrNote, setQrNote] = useState('');
   const [editingQrId, setEditingQrId] = useState<string | number | null>(null);
   const [editQrDraft, setEditQrDraft] = useState<Partial<ProductVideoQr>>({});
+
+  useEffect(() => {
+    (async () => {
+      try {
+        const { data } = await supabase.from('crops').select('id,name,pen_id,quantity,status').order('id', { ascending: false });
+        if (data && data.length > 0) {
+          setCropsList(data);
+          setSelectedQrCropId(String(data[0].id));
+          return;
+        }
+      } catch {}
+      try {
+        const base = process.env.NEXT_PUBLIC_API_URL || 'http://127.0.0.1:8000';
+        const res = await fetch(`${base}/api/crops`);
+        if (res.ok) {
+          const arr = await res.json();
+          if (Array.isArray(arr) && arr.length > 0) {
+            setCropsList(arr);
+            setSelectedQrCropId(String(arr[0].id));
+          }
+        }
+      } catch {}
+    })();
+  }, []);
 
   const storageKey = `smartfarm_ext_${userId || 'demo'}`;
 
@@ -556,14 +590,17 @@ export default function FeedExtendedModules({
     setQuotas((prev) => prev.filter((x) => x.id !== id));
   };
 
-  // --- CRUD HANDLERS: QR VIDEO ---
+  // --- CRUD HANDLERS: QR CÂY TRỒNG ---
   const handleAddQr = async () => {
-    if (!qrProduct.trim() || !qrVideoUrl.trim()) return;
+    const crop = cropsList.find((c) => String(c.id) === String(selectedQrCropId));
+    if (!crop) return;
+    const origin = typeof window !== 'undefined' ? window.location.origin : 'https://v-argon.farm';
+    const quickUrl = `${origin}/?crop_id=${crop.id}${crop.pen_id ? `&pen_id=${encodeURIComponent(crop.pen_id)}` : ''}`;
     const payload = {
-      product_name: qrProduct.trim(),
-      lot_code: qrLot.trim() || `LOT-${videoQrs.length + 1}`,
-      video_url: qrVideoUrl.trim(),
-      note: qrNote.trim() || 'Video minh bạch quy trình sản xuất tại trang trại.',
+      product_name: crop.name,
+      lot_code: `CROP-${crop.id}${crop.pen_id ? ` • Khu ${crop.pen_id}` : ''}`,
+      video_url: quickUrl,
+      note: qrNote.trim() || `Truy cập nhanh cây trồng ${crop.name} (${crop.quantity ?? 1} cây • ${crop.status || 'Growing'})`,
     };
     if (dbSynced && userId) {
       const { data } = await supabase
@@ -575,9 +612,6 @@ export default function FeedExtendedModules({
     } else {
       setVideoQrs((prev) => [{ id: `qr_${Date.now()}`, ...payload }, ...prev]);
     }
-    setQrProduct('');
-    setQrLot('');
-    setQrVideoUrl('');
     setQrNote('');
   };
 
@@ -610,8 +644,47 @@ export default function FeedExtendedModules({
     { id: 'finance', label: 'Thu chi & Công nợ', icon: Wallet },
     { id: 'office', label: 'V-Argon Office', icon: Table2 },
     { id: 'hr', label: 'Nhân sự & Khoán', icon: Users },
-    { id: 'qr', label: 'QR Video Sản Xuất', icon: QrCode },
+    { id: 'qr', label: 'QR Cây Trồng', icon: QrCode },
   ];
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(`smartfarm_workdays_${userId || 'demo'}`, JSON.stringify(workDaysDrafts));
+    } catch {}
+  }, [workDaysDrafts, userId]);
+
+  const setStaffWorkDays = (staffId: string, days: number) => {
+    const clamped = Math.max(0, Math.round(days * 10) / 10);
+    setWorkDaysDrafts((prev) => ({ ...prev, [staffId]: clamped }));
+  };
+
+  const handleExportStaffPayrollExcel = () => {
+    const rows = staffWages.map((st) => {
+      const dailyWage = Number(wageDrafts[st.id] ?? st.daily_wage ?? 300000) || 0;
+      const days = Number(workDaysDrafts[st.id] ?? 0) || 0;
+      const total = Math.round(dailyWage * days);
+      const logs = todayAttLogs.filter((l) => l.staff_id === st.id);
+      const attStatus = logs.some((l) => l.check_type === 'check_out')
+        ? 'Đủ công (đã tan ca)'
+        : logs.length > 0
+        ? 'Đang trong ca'
+        : 'Chưa điểm danh';
+      return [st.id, st.name, st.role || 'Nhân viên', attStatus, dailyWage, days, total];
+    });
+    const grandTotalDays = staffWages.reduce((s, st) => s + (Number(workDaysDrafts[st.id] ?? 0) || 0), 0);
+    const grandTotalPay = staffWages.reduce((s, st) => {
+      const w = Number(wageDrafts[st.id] ?? st.daily_wage ?? 300000) || 0;
+      const d = Number(workDaysDrafts[st.id] ?? 0) || 0;
+      return s + Math.round(w * d);
+    }, 0);
+    rows.push(['', 'TỔNG CỘNG', '', '', '', grandTotalDays, grandTotalPay]);
+    exportTableToExcel(
+      `bang-cong-luong-nhan-su-${new Date().toISOString().slice(0, 10)}`,
+      'Bảng Công & Lương',
+      ['Mã NV', 'Họ tên', 'Chức vụ', 'Điểm danh hôm nay', 'Tiền công / ngày (VNĐ)', 'Số ngày công', 'Thành tiền (VNĐ)'],
+      rows
+    );
+  };
 
   return (
     <section
@@ -1256,23 +1329,33 @@ export default function FeedExtendedModules({
           <div className="space-y-4">
             {/* Bảng Nhân sự & Tiền công ngày (từ bảng staff) */}
             <div className="rounded-xl border border-indigo-200 bg-indigo-50/40 p-3 space-y-2.5">
-              <div className="flex items-center justify-between gap-2">
+              <div className="flex flex-wrap items-center justify-between gap-2">
                 <div>
                   <h4 className="text-xs font-extrabold text-indigo-950">
-                    Bảng Nhân Sự &amp; Tiền Công Ngày (Đọc từ DB <code className="px-1 bg-white rounded">staff</code>)
+                    Bảng Nhân Sự, Tiền Công Ngày &amp; Ghi Công (Đọc từ DB <code className="px-1 bg-white rounded">staff</code>)
                   </h4>
                   <p className="text-[11px] text-indigo-800/80">
-                    Khi nhân sự điểm danh đủ ngày công (Vào ca &amp; Tan ca), Agent cuối ngày sẽ tự động cộng số tiền công đã cài đặt bên dưới vào bảng Office.
+                    Thiết lập mức tiền công 1 ngày, ghi số ngày công bên cạnh để tự tính thành tiền và xuất file Excel.
                   </p>
                 </div>
-                <button
-                  type="button"
-                  onClick={loadStaffWages}
-                  className="inline-flex items-center gap-1 rounded-lg border border-indigo-200 bg-white px-2.5 py-1 text-[11px] font-bold text-indigo-700 hover:bg-indigo-50 cursor-pointer"
-                >
-                  <RefreshCw className="w-3 h-3" />
-                  <span>Làm mới</span>
-                </button>
+                <div className="flex items-center gap-1.5">
+                  <button
+                    type="button"
+                    onClick={handleExportStaffPayrollExcel}
+                    className="inline-flex items-center gap-1 rounded-lg border border-emerald-200 bg-emerald-50 hover:bg-emerald-100 px-2.5 py-1 text-[11px] font-bold text-emerald-800 cursor-pointer"
+                  >
+                    <FileSpreadsheet className="w-3.5 h-3.5" />
+                    <span>Xuất Excel Công &amp; Lương</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={loadStaffWages}
+                    className="inline-flex items-center gap-1 rounded-lg border border-indigo-200 bg-white px-2.5 py-1 text-[11px] font-bold text-indigo-700 hover:bg-indigo-50 cursor-pointer"
+                  >
+                    <RefreshCw className="w-3 h-3" />
+                    <span>Làm mới</span>
+                  </button>
+                </div>
               </div>
 
               <div className="overflow-x-auto rounded-lg border border-indigo-100 bg-white">
@@ -1284,7 +1367,9 @@ export default function FeedExtendedModules({
                       <th className="px-3 py-2">Chức vụ</th>
                       <th className="px-3 py-2">Điểm danh hôm nay</th>
                       <th className="px-3 py-2">Tiền công / ngày (VNĐ)</th>
-                      <th className="px-3 py-2 text-right">Lưu</th>
+                      <th className="px-3 py-2">Ghi công (ngày)</th>
+                      <th className="px-3 py-2 text-right">Thành tiền</th>
+                      <th className="px-3 py-2 text-right">Lưu công</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-indigo-50">
@@ -1297,6 +1382,9 @@ export default function FeedExtendedModules({
                         : hasIn
                         ? { text: 'Đang trong ca', cls: 'bg-amber-100 text-amber-800' }
                         : { text: 'Chưa điểm danh', cls: 'bg-slate-100 text-slate-600' };
+                      const dailyWageNum = Number(wageDrafts[st.id] ?? st.daily_wage ?? 300000) || 0;
+                      const workDays = Number(workDaysDrafts[st.id] ?? 0) || 0;
+                      const totalPay = Math.round(dailyWageNum * workDays);
 
                       return (
                         <tr key={st.id}>
@@ -1318,6 +1406,35 @@ export default function FeedExtendedModules({
                               className="w-28 bg-fb-bg rounded-lg px-2 py-1 border border-fb-divider text-xs font-bold text-right"
                             />
                           </td>
+                          <td className="px-3 py-2">
+                            <div className="inline-flex items-center gap-1">
+                              <button
+                                type="button"
+                                onClick={() => setStaffWorkDays(st.id, workDays - 0.5)}
+                                className="w-6 h-6 rounded-md bg-slate-100 hover:bg-slate-200 font-bold text-slate-700 cursor-pointer"
+                              >
+                                -
+                              </button>
+                              <input
+                                type="number"
+                                step="0.5"
+                                min="0"
+                                value={workDays}
+                                onChange={(e) => setStaffWorkDays(st.id, Number(e.target.value) || 0)}
+                                className="w-16 bg-fb-bg rounded-lg px-1.5 py-1 border border-fb-divider text-xs font-bold text-center"
+                              />
+                              <button
+                                type="button"
+                                onClick={() => setStaffWorkDays(st.id, workDays + 1)}
+                                className="w-6 h-6 rounded-md bg-emerald-100 hover:bg-emerald-200 font-bold text-emerald-800 cursor-pointer"
+                              >
+                                +1
+                              </button>
+                            </div>
+                          </td>
+                          <td className="px-3 py-2 text-right font-extrabold text-emerald-700 whitespace-nowrap">
+                            {totalPay.toLocaleString('vi-VN')} đ
+                          </td>
                           <td className="px-3 py-2 text-right">
                             <button
                               type="button"
@@ -1332,6 +1449,27 @@ export default function FeedExtendedModules({
                       );
                     })}
                   </tbody>
+                  {staffWages.length > 0 && (
+                    <tfoot className="bg-indigo-50/50 border-t border-indigo-100 font-extrabold text-indigo-950">
+                      <tr>
+                        <td colSpan={5} className="px-3 py-2 text-right">Tổng cộng:</td>
+                        <td className="px-3 py-2 text-center">
+                          {staffWages.reduce((s, st) => s + (Number(workDaysDrafts[st.id] ?? 0) || 0), 0)} ngày
+                        </td>
+                        <td className="px-3 py-2 text-right text-emerald-700 whitespace-nowrap">
+                          {staffWages
+                            .reduce((s, st) => {
+                              const w = Number(wageDrafts[st.id] ?? st.daily_wage ?? 300000) || 0;
+                              const d = Number(workDaysDrafts[st.id] ?? 0) || 0;
+                              return s + Math.round(w * d);
+                            }, 0)
+                            .toLocaleString('vi-VN')}{' '}
+                          đ
+                        </td>
+                        <td />
+                      </tr>
+                    </tfoot>
+                  )}
                 </table>
               </div>
             </div>
@@ -1552,71 +1690,64 @@ export default function FeedExtendedModules({
             <div className="flex flex-wrap items-center justify-between gap-2">
               <div>
                 <span className="text-xs font-extrabold text-fb-text flex items-center gap-1.5">
-                  <Video className="w-4 h-4 text-emerald-700" />
-                  <span>Thêm Mã QR Video Sản Xuất Sản Phẩm</span>
+                  <QrCode className="w-4 h-4 text-emerald-700" />
+                  <span>Tạo Mã QR Truy Cập Nhanh Cây Trồng</span>
                 </span>
                 <p className="text-[11px] text-fb-muted mt-0.5">
-                  Gắn link video quá trình nuôi trồng / thu hoạch để tạo mã QR dán lên bao bì sản phẩm.
+                  Chọn cây trồng bất kỳ để tạo mã QR; khi quét mã sẽ mở thẳng thông tin cây trồng đó.
                 </p>
               </div>
               <button
                 type="button"
                 onClick={() =>
                   exportTableToExcel(
-                    `qr-video-san-xuat-${new Date().toISOString().slice(0, 10)}`,
-                    'QR Video Sản Xuất',
-                    ['Mã lô', 'Tên sản phẩm', 'Link video sản xuất', 'Ghi chú quy trình'],
+                    `qr-cay-trong-${new Date().toISOString().slice(0, 10)}`,
+                    'QR Cây Trồng',
+                    ['Mã cây', 'Tên cây trồng', 'Link truy cập nhanh', 'Ghi chú'],
                     videoQrs.map((q) => [q.lot_code, q.product_name, q.video_url, q.note])
                   )
                 }
                 className="inline-flex items-center gap-1.5 rounded-xl border border-emerald-200 bg-emerald-50 hover:bg-emerald-100 px-3 py-1.5 text-[11px] font-bold text-emerald-800 transition cursor-pointer"
               >
                 <FileSpreadsheet className="w-3.5 h-3.5" />
-                <span>Xuất Excel QR Video</span>
+                <span>Xuất Excel QR</span>
               </button>
             </div>
 
             <div className="rounded-xl bg-slate-50 border border-fb-divider p-3.5 space-y-2.5">
-              <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
-                <input
-                  type="text"
-                  value={qrProduct}
-                  onChange={(e) => setQrProduct(e.target.value)}
-                  placeholder="Tên sản phẩm (vd: Rau cải hữu cơ)..."
-                  className="bg-white rounded-xl px-3 py-2 border border-fb-divider"
-                />
-                <input
-                  type="text"
-                  value={qrLot}
-                  onChange={(e) => setQrLot(e.target.value)}
-                  placeholder="Mã lô / Chuồng (vd: LOT-01)..."
-                  className="bg-white rounded-xl px-3 py-2 border border-fb-divider"
-                />
-                <input
-                  type="url"
-                  value={qrVideoUrl}
-                  onChange={(e) => setQrVideoUrl(e.target.value)}
-                  placeholder="Link video (YouTube, Drive, MP4)..."
-                  className="bg-white rounded-xl px-3 py-2 border border-fb-divider"
-                />
-              </div>
-              <div className="flex flex-col sm:flex-row gap-2">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                <select
+                  value={selectedQrCropId}
+                  onChange={(e) => setSelectedQrCropId(e.target.value)}
+                  className="bg-white rounded-xl px-3 py-2 border border-fb-divider font-semibold text-slate-800"
+                >
+                  {cropsList.length === 0 ? (
+                    <option value="">-- Chưa có cây trồng trong DB --</option>
+                  ) : (
+                    cropsList.map((c) => (
+                      <option key={c.id} value={String(c.id)}>
+                        🌱 {c.name} (ID #{c.id}{c.pen_id ? ` • Khu ${c.pen_id}` : ''})
+                      </option>
+                    ))
+                  )}
+                </select>
                 <input
                   type="text"
                   value={qrNote}
                   onChange={(e) => setQrNote(e.target.value)}
-                  placeholder="Mô tả ngắn quá trình sản xuất trong video..."
-                  className="flex-1 bg-white rounded-xl px-3 py-2 border border-fb-divider"
+                  placeholder="Ghi chú thêm (tùy chọn)..."
+                  className="bg-white rounded-xl px-3 py-2 border border-fb-divider"
                 />
-                <button
-                  type="button"
-                  onClick={handleAddQr}
-                  className="inline-flex items-center justify-center gap-1.5 rounded-xl bg-emerald-700 hover:bg-emerald-800 px-4 py-2 font-bold text-white transition cursor-pointer shrink-0"
-                >
-                  <QrCode className="w-3.5 h-3.5" />
-                  <span>Tạo mã QR Video</span>
-                </button>
               </div>
+              <button
+                type="button"
+                onClick={handleAddQr}
+                disabled={!selectedQrCropId}
+                className="inline-flex items-center justify-center gap-1.5 rounded-xl bg-emerald-700 hover:bg-emerald-800 disabled:opacity-50 px-4 py-2 font-bold text-white transition cursor-pointer"
+              >
+                <QrCode className="w-3.5 h-3.5" />
+                <span>Tạo mã QR cây trồng</span>
+              </button>
             </div>
 
             <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
@@ -1725,19 +1856,25 @@ export default function FeedExtendedModules({
                           <div className="text-[10px] text-blue-600 truncate">{item.video_url}</div>
 
                           <div className="pt-1 flex flex-wrap items-center gap-2">
-                            <a
-                              href={item.video_url}
-                              target="_blank"
-                              rel="noopener noreferrer"
-                              className="inline-flex items-center gap-1 rounded-lg bg-emerald-50 border border-emerald-200 px-2.5 py-1 text-[11px] font-bold text-emerald-800 hover:bg-emerald-100"
+                            <button
+                              type="button"
+                              onClick={() => {
+                                const m = String(item.video_url || '').match(/crop_id=([^&]+)/);
+                                const pm = String(item.video_url || '').match(/pen_id=([^&]+)/);
+                                if (m && onQuickAccessCrop) {
+                                  onQuickAccessCrop(decodeURIComponent(m[1]), pm ? decodeURIComponent(pm[1]) : undefined);
+                                } else if (item.video_url) {
+                                  window.open(item.video_url, '_blank', 'noopener,noreferrer');
+                                }
+                              }}
+                              className="inline-flex items-center gap-1 rounded-lg bg-emerald-600 hover:bg-emerald-700 px-2.5 py-1 text-[11px] font-bold text-white cursor-pointer"
                             >
-                              <Video className="w-3 h-3" />
-                              <span>Xem video</span>
-                              <ExternalLink className="w-2.5 h-2.5" />
-                            </a>
+                              <ExternalLink className="w-3 h-3" />
+                              <span>Truy cập nhanh</span>
+                            </button>
                             <a
                               href={qrImgUrl}
-                              download={`${item.lot_code}-qr-video.png`}
+                              download={`${item.lot_code}-qr.png`}
                               target="_blank"
                               rel="noopener noreferrer"
                               className="inline-flex items-center gap-1 rounded-lg bg-slate-100 hover:bg-slate-200 px-2.5 py-1 text-[11px] font-bold text-fb-text"

@@ -88,6 +88,9 @@ dependencies {
     implementation("androidx.camera:camera-lifecycle:1.3.3")
     implementation("androidx.camera:camera-view:1.3.3")
 
+    // ZXing (QR code generation & CameraX QR scanning)
+    implementation("com.google.zxing:core:3.5.3")
+
     // UI Tooling
     debugImplementation("androidx.compose.ui:ui-tooling")
     debugImplementation("androidx.compose.ui:ui-test-manifest")

@@ -47,6 +47,7 @@ export default function IosFarmOperations({
   // Search & filter
   const [searchQuery, setSearchQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState<'all' | 'ready' | 'attention' | 'healthy'>('all');
+  const [showExportHistory, setShowExportHistory] = useState(false);
 
   // Quick action modal-like inline state + existing logs
   const [activeLogTarget, setActiveLogTarget] = useState<{
@@ -392,6 +393,28 @@ export default function IosFarmOperations({
             <div className="flex gap-1.5">
               <button
                 type="button"
+                onClick={() => setShowExportHistory((v) => !v)}
+                className={`px-2 py-1.5 rounded-lg text-[11px] font-bold ${
+                  showExportHistory ? 'bg-amber-600 text-white' : 'bg-slate-100 text-slate-700'
+                }`}
+              >
+                Lịch sử xuất
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  if (isCultivation) {
+                    exportCsv('cay-trong', ['Tên', 'Giống', 'Số lượng', 'Trạng thái'], crops.map((c) => [c.name, c.variety, c.quantity, c.status]));
+                  } else {
+                    exportCsv('vat-nuoi', ['Mã', 'Loài', 'Giống', 'Cân nặng', 'Trạng thái'], animals.map((a) => [a.id, a.species, a.breed, a.weight, a.status]));
+                  }
+                }}
+                className="px-2 py-1.5 rounded-lg bg-slate-100 text-emerald-700 text-[11px] font-bold"
+              >
+                CSV
+              </button>
+              <button
+                type="button"
                 onClick={loadData}
                 className="p-1.5 rounded-lg bg-slate-100 text-slate-700"
                 title="Làm mới"
@@ -404,10 +427,42 @@ export default function IosFarmOperations({
                 className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-emerald-600 text-white text-[11px] font-bold"
               >
                 <Plus className="w-3.5 h-3.5" />
-                {isCultivation ? 'Thêm cây' : 'Thêm vật nuôi'}
+                {isCultivation ? 'Thêm' : 'Thêm'}
               </button>
             </div>
           </div>
+
+          {showExportHistory && (
+            <div className="bg-amber-50 border border-amber-200 rounded-2xl p-3 space-y-1.5">
+              <div className="flex items-center justify-between">
+                <span className="text-[12px] font-bold text-amber-900">
+                  Lịch sử xuất chuồng / thu hoạch
+                </span>
+                <button
+                  type="button"
+                  onClick={() => {
+                    const ex = invLogs.filter((l) => l.action_type === 'ANIMAL_EXPORT' || l.action_type === 'CROP_HARVEST');
+                    exportCsv('lich-su-xuat-ban', ['Loại', 'Tên', 'Số lượng', 'Đơn vị', 'Ghi chú'], ex.map((l) => [l.action_type, l.item_name, l.quantity, l.unit || '', l.note || '']));
+                  }}
+                  className="text-[11px] font-bold text-emerald-700"
+                >
+                  Xuất CSV
+                </button>
+              </div>
+              {invLogs.filter((l) => l.action_type === 'ANIMAL_EXPORT' || l.action_type === 'CROP_HARVEST').length === 0 ? (
+                <p className="text-[11px] text-amber-700">Chưa có lịch sử xuất bán.</p>
+              ) : (
+                invLogs
+                  .filter((l) => l.action_type === 'ANIMAL_EXPORT' || l.action_type === 'CROP_HARVEST')
+                  .map((l, idx) => (
+                    <div key={l.id || idx} className="text-[11px] bg-white rounded-lg px-2.5 py-1.5 flex justify-between">
+                      <span className="font-semibold text-slate-800">{l.item_name}</span>
+                      <span className="text-emerald-700 font-bold">{l.quantity} {l.unit}</span>
+                    </div>
+                  ))
+              )}
+            </div>
+          )}
 
           {/* Search & Status Filter */}
           <div className="flex gap-2">

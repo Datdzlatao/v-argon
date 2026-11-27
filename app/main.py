@@ -1179,7 +1179,7 @@ async def get_staff_attendance_history_api(
 
 @app.post("/api/staff/enroll", tags=["Staff & Face Attendance"])
 async def enroll_staff_face_api(
-    staff_id: str = Form(...),
+    staff_id: Optional[str] = Form(None),
     staff_name: str = Form(...),
     pen_id: str = Form("123"),
     role: str = Form("Kỹ thuật viên"),
@@ -1189,20 +1189,22 @@ async def enroll_staff_face_api(
     file_nghieng_phai: Optional[UploadFile] = File(None),
 ):
     """
-    Đăng ký FaceID mới cho nhân viên: Cập nhật cơ sở dữ liệu và tải khuôn mặt vào AI Vision Engine.
+    Đăng ký FaceID mới cho nhân viên: Cập nhật cơ sở dữ liệu (tự tăng ID nếu bỏ trống) và tải khuôn mặt vào AI Vision Engine.
     Hỗ trợ cả chế độ chuẩn eKYC 3 góc (thẳng, nghiêng trái, nghiêng phải) và chế độ đơn ảnh.
     """
     try:
-        sid = staff_id.strip()
         sname = staff_name.strip()
+        if not sname:
+            raise HTTPException(status_code=400, detail="Vui lòng nhập họ tên nhân sự.")
 
-        # 1. Đăng ký vào cơ sở dữ liệu nhân sự
+        # 1. Đăng ký vào cơ sở dữ liệu nhân sự (tự tăng ID số nếu staff_id trống)
         created = staff_repo.create_staff(
-            staff_id=sid,
+            staff_id=(staff_id or "").strip() or None,
             name=sname,
             role=role.strip(),
             pen_id=pen_id.strip(),
         )
+        sid = str(created.get("id") or staff_id or "").strip()
 
         # 2. Xử lý ảnh khuôn mặt
         if file_thang and file_nghieng_trai and file_nghieng_phai:
@@ -1229,13 +1231,21 @@ async def enroll_staff_face_api(
                 filename=target.filename or f"{sid}_thang.jpg",
             )
 
+        if isinstance(vision_resp, dict) and vision_resp.get("status") == "error":
+            raise HTTPException(
+                status_code=422,
+                detail=vision_resp.get("message") or "Không tìm thấy khuôn mặt rõ nét trong ảnh cung cấp."
+            )
+
         await ws_manager.broadcast("staff_update", {"action": "enroll", "staff": created})
         return {
             "status": "success",
-            "message": f"Đã đăng ký FaceID thành công cho nhân sự {sname} ({sid})",
+            "message": f"Đã đăng ký FaceID thành công cho nhân sự {sname} (ID: {sid})",
             "staff": created,
             "vision_engine": vision_resp,
         }
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Enroll staff face error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
@@ -1244,16 +1254,21 @@ async def enroll_staff_face_api(
 @app.post("/api/staff/reload-faces", tags=["Staff & Face Attendance"])
 async def reload_staff_faces_api():
     """Làm mới danh sách FaceID từ thư mục standalone_ai_engine/known_faces."""
-    try:
-        vision_base = settings.VISION_ENGINE_URL.rstrip('/')
-        async with httpx.AsyncClient(timeout=10.0) as client:
-            resp = await client.post(f"{vision_base}/api/v1/faces/reload")
-            if resp.status_code == 200:
-                return resp.json()
-            raise HTTPException(resp.status_code, resp.text)
-    except Exception as e:
-        logger.error(f"Reload faces error: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+    candidates = [settings.VISION_ENGINE_URL.rstrip('/')]
+    if "127.0.0.1:8001" not in candidates[0] and "localhost:8001" not in candidates[0]:
+        candidates.append("http://127.0.0.1:8001")
+    last_err = None
+    async with httpx.AsyncClient(timeout=15.0) as client:
+        for base in candidates:
+            try:
+                resp = await client.post(f"{base}/api/v1/faces/reload")
+                if resp.status_code == 200:
+                    return resp.json()
+                last_err = f"HTTP {resp.status_code}: {resp.text}"
+            except Exception as e:
+                last_err = str(e)
+    logger.error(f"Reload faces error: {last_err}")
+    raise HTTPException(status_code=500, detail=last_err or "Không thể kết nối AI Vision Engine")
 
 
 # ====================================================================

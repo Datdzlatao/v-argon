@@ -29,6 +29,7 @@ import com.smartfarm.app.ui.components.AddCropDialog
 import com.smartfarm.app.ui.components.TransferAnimalDialog
 import com.smartfarm.app.ui.theme.*
 import com.smartfarm.app.ui.viewmodel.FarmViewModel
+import com.smartfarm.app.util.rememberCsvExporter
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -65,6 +66,9 @@ fun LivestockCropsScreen(
     val weightLogs by viewModel.weightLogs.collectAsState()
     val cropGrowthLogs by viewModel.cropGrowthLogs.collectAsState()
     val cropCareLogs by viewModel.cropCareLogs.collectAsState()
+    val operationLogs by viewModel.operationLogs.collectAsState()
+    var showExportHistory by remember { mutableStateOf(false) }
+    val exportCsv = rememberCsvExporter { _, msg -> viewModel.showToast(msg) }
 
     val isLivestock = currentMode == "livestock"
 
@@ -100,22 +104,45 @@ fun LivestockCropsScreen(
                         )
                     }
 
-                    Button(
-                        onClick = {
-                            if (isLivestock) showAddAnimalDialog = true
-                            else showAddCropDialog = true
-                        },
-                        colors = ButtonDefaults.buttonColors(containerColor = FarmPrimary),
-                        shape = RoundedCornerShape(12.dp),
-                        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp)
-                    ) {
-                        Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(16.dp))
-                        Spacer(modifier = Modifier.width(4.dp))
-                        Text(
-                            text = if (isLivestock) "Thêm Vật Nuôi" else "Thêm Giống Cây",
-                            fontSize = 12.sp,
-                            fontWeight = FontWeight.Bold
-                        )
+                    Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        OutlinedButton(
+                            onClick = {
+                                if (isLivestock) {
+                                    exportCsv(
+                                        "vat-nuoi-vargon",
+                                        listOf("Mã", "Loài", "Cân nặng (kg)", "Mục tiêu (kg)", "Trạng thái"),
+                                        animals.map { listOf(it.id, it.species, it.weight, it.targetWeight, it.status ?: "") }
+                                    )
+                                } else {
+                                    exportCsv(
+                                        "cay-trong-vargon",
+                                        listOf("Mã", "Tên cây", "Số lượng", "Giai đoạn", "Thu hoạch"),
+                                        crops.map { listOf(it.displayId, it.name, it.quantity, it.stage, it.expectedHarvest) }
+                                    )
+                                }
+                            },
+                            shape = RoundedCornerShape(12.dp),
+                            contentPadding = PaddingValues(horizontal = 10.dp, vertical = 8.dp)
+                        ) {
+                            Text("CSV", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = FarmPrimary)
+                        }
+                        Button(
+                            onClick = {
+                                if (isLivestock) showAddAnimalDialog = true
+                                else showAddCropDialog = true
+                            },
+                            colors = ButtonDefaults.buttonColors(containerColor = FarmPrimary),
+                            shape = RoundedCornerShape(12.dp),
+                            contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp)
+                        ) {
+                            Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(16.dp))
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Text(
+                                text = if (isLivestock) "Thêm Vật Nuôi" else "Thêm Giống Cây",
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.Bold
+                            )
+                        }
                     }
                 }
 
@@ -187,7 +214,27 @@ fun LivestockCropsScreen(
                     FilterChipItem("Tất cả", isSelected = selectedFilter == "all", onClick = { selectedFilter = "all" })
                     FilterChipItem("Sẵn sàng xuất", isSelected = selectedFilter == "ready", onClick = { selectedFilter = "ready" })
                     FilterChipItem("Cần chăm sóc", isSelected = selectedFilter == "attention", onClick = { selectedFilter = "attention" })
-                    FilterChipItem("Khỏe mạnh", isSelected = selectedFilter == "healthy", onClick = { selectedFilter = "healthy" })
+                    FilterChipItem("Lịch sử xuất", isSelected = showExportHistory, onClick = { showExportHistory = !showExportHistory; if (showExportHistory) viewModel.loadOperationLogs() })
+                }
+
+                if (showExportHistory) {
+                    val exports = operationLogs.filter { it.actionType == "ANIMAL_EXPORT" || it.actionType == "CROP_HARVEST" }
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Surface(shape = RoundedCornerShape(12.dp), color = Color(0xFFFFFBEB), border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFFFDE68A)), modifier = Modifier.fillMaxWidth()) {
+                        Column(modifier = Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                            Text("Lịch sử xuất chuồng / thu hoạch (${exports.size})", fontWeight = FontWeight.Bold, fontSize = 12.sp, color = Color(0xFF92400E))
+                            if (exports.isEmpty()) {
+                                Text("Chưa có lịch sử xuất bán.", fontSize = 11.sp, color = Color(0xFFB45309))
+                            } else {
+                                exports.take(6).forEach { log ->
+                                    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                                        Text(log.itemName, fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
+                                        Text("${log.quantity} ${log.unit ?: ""}", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = FarmPrimary)
+                                    }
+                                }
+                            }
+                        }
+                    }
                 }
             }
         }

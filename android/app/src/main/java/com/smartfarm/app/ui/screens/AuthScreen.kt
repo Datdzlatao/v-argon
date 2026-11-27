@@ -30,6 +30,8 @@ import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.res.painterResource
+import com.smartfarm.app.R
 import com.smartfarm.app.ui.theme.*
 import com.smartfarm.app.ui.viewmodel.FarmViewModel
 
@@ -84,8 +86,8 @@ fun AuthScreen(
                     contentAlignment = Alignment.Center
                 ) {
                     Icon(
-                        imageVector = Icons.Default.Spa,
-                        contentDescription = "Biểu tượng nông trại",
+                        painter = painterResource(id = R.drawable.ic_v_argon_mark),
+                        contentDescription = "Logo V-ARGON",
                         tint = Color.White,
                         modifier = Modifier.size(32.dp)
                     )

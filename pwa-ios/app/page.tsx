@@ -28,11 +28,13 @@ import {
   Trash2,
   Settings,
   Cpu,
+  QrCode,
 } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import WebSocketStreamPlayer from '../components/WebSocketStreamPlayer';
 import GeminiMarkdown from '../components/GeminiMarkdown';
 import IosManageModules from '../components/IosManageModules';
+import QrScannerModal, { ParsedCropQr } from '../components/QrScannerModal';
 import IosAuthScreen from '../components/IosAuthScreen';
 import IosEnvChart from '../components/IosEnvChart';
 import IosAttendanceTab from '../components/IosAttendanceTab';
@@ -129,6 +131,7 @@ export default function IosPwaPage() {
   const [dismissedAlert, setDismissedAlert] = useState(false);
   const alarmSoundRef = useRef<HTMLAudioElement | null>(null);
   const [toastMsg, setToastMsg] = useState<string | null>(null);
+  const [showQrScanner, setShowQrScanner] = useState(false);
 
   // Modals: Add Pen, Add Device, Config Camera
   const [showAddPen, setShowAddPen] = useState(false);
@@ -682,6 +685,14 @@ export default function IosPwaPage() {
               {wsConnected ? 'Live' : '...'}
             </span>
             <button
+              onClick={() => setShowQrScanner(true)}
+              className="px-2.5 h-8 rounded-full bg-emerald-50 border border-emerald-200 text-emerald-700 text-[11px] font-bold flex items-center gap-1"
+              title="Quét mã QR cây trồng"
+            >
+              <QrCode className="w-3.5 h-3.5" />
+              <span>Quét QR</span>
+            </button>
+            <button
               onClick={() => setIsMuted(!isMuted)}
               className="w-8 h-8 rounded-full bg-black/5 flex items-center justify-center"
               title={isMuted ? 'Bật chuông cảnh báo' : 'Tắt chuông cảnh báo'}
@@ -1106,6 +1117,20 @@ export default function IosPwaPage() {
             penType={(currentPen as any)?.type || currentMode}
             pens={pens}
             onRefreshParent={() => loadPensAndData(currentMode, currentPenId)}
+            onNotify={showToast}
+            onQuickAccessCrop={async (cropId, penId) => {
+              let targetPen = penId;
+              if (!targetPen && cropId) {
+                try {
+                  const { data } = await supabase.from('crops').select('pen_id').eq('id', cropId).maybeSingle();
+                  if (data?.pen_id) targetPen = String(data.pen_id);
+                } catch {}
+              }
+              setCurrentMode('cultivation');
+              setActiveTab('manage');
+              if (targetPen) setCurrentPenId(targetPen);
+              showToast(`Đã truy cập nhanh cây trồng #${cropId}`);
+            }}
           />
         )}
 
@@ -1306,6 +1331,31 @@ export default function IosPwaPage() {
           </form>
         </div>
       )}
+
+      <QrScannerModal
+        isOpen={showQrScanner}
+        onClose={() => setShowQrScanner(false)}
+        onDetected={async (parsed: ParsedCropQr) => {
+          setShowQrScanner(false);
+          if (parsed.cropId) {
+            let targetPen = parsed.penId;
+            let cropName = `#${parsed.cropId}`;
+            try {
+              const { data } = await supabase.from('crops').select('pen_id,name').eq('id', parsed.cropId).maybeSingle();
+              if (data?.pen_id && !targetPen) targetPen = String(data.pen_id);
+              if (data?.name) cropName = data.name;
+            } catch {}
+            setCurrentMode('cultivation');
+            setActiveTab('manage');
+            if (targetPen) setCurrentPenId(targetPen);
+            showToast(`Đã quét QR: ${cropName}`);
+          } else if (parsed.raw.startsWith('http')) {
+            window.open(parsed.raw, '_blank', 'noreferrer');
+          } else {
+            showToast(`Đã quét mã QR: ${parsed.raw}`);
+          }
+        }}
+      />
 
       {/* Toast */}
       {toastMsg && (

@@ -22,6 +22,7 @@ import com.smartfarm.app.ui.components.ExportInventoryDialog
 import com.smartfarm.app.ui.components.ImportInventoryDialog
 import com.smartfarm.app.ui.theme.*
 import com.smartfarm.app.ui.viewmodel.FarmViewModel
+import com.smartfarm.app.util.rememberCsvExporter
 
 @Composable
 fun InventoryScreen(
@@ -43,6 +44,7 @@ fun InventoryScreen(
     var showImportDialog by remember { mutableStateOf(false) }
     var showExportDialog by remember { mutableStateOf(false) }
     var selectedItemForExport by remember { mutableStateOf<InventoryItem?>(null) }
+    val exportCsv = rememberCsvExporter { _, msg -> viewModel.showToast(msg) }
 
     val categories = listOf("Tất cả", "Thức ăn", "Feed", "Phân bón", "Thuốc thú y", "Crops", "Vật tư")
 
@@ -84,7 +86,28 @@ fun InventoryScreen(
                         )
                     }
 
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        OutlinedButton(
+                            onClick = {
+                                if (activeTab == 0) {
+                                    exportCsv(
+                                        "ton-kho-vargon",
+                                        listOf("Tên", "Danh mục", "Số lượng", "Đơn vị", "Đơn giá"),
+                                        inventory.map { listOf(it.name, it.category, it.quantity, it.unit, it.unitPrice ?: 0) }
+                                    )
+                                } else {
+                                    exportCsv(
+                                        "nhat-ky-kho-vargon",
+                                        listOf("Loại", "Tên", "Số lượng", "Đơn vị", "Ghi chú"),
+                                        operationLogs.map { listOf(it.actionType, it.itemName, it.quantity, it.unit ?: "", it.note ?: "") }
+                                    )
+                                }
+                            },
+                            shape = RoundedCornerShape(12.dp),
+                            contentPadding = PaddingValues(horizontal = 10.dp, vertical = 8.dp)
+                        ) {
+                            Text("CSV", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = FarmPrimary)
+                        }
                         Button(
                             onClick = { showImportDialog = true },
                             colors = ButtonDefaults.buttonColors(containerColor = FarmPrimary),

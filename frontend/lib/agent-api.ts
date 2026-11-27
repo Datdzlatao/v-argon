@@ -777,55 +777,95 @@ export async function enrollStaffFace(
     fSingle = file;
   }
 
-  const cleanId = sId.trim().toUpperCase();
+  const cleanId = (sId || '').trim().toUpperCase();
   const cleanName = sName.trim();
 
-  // 1. Lưu ngay vào Supabase bảng staff
-  try {
-    await supabase.from('staff').upsert({
-      id: cleanId,
-      name: cleanName,
-      role: sRole.trim(),
-      pen_id: sPenId || '123',
-      created_at: new Date().toISOString(),
-    }, { onConflict: 'id' });
-  } catch (supaErr) {
-    console.error('Error saving new staff to Supabase:', supaErr);
+  // 1. Gửi sang Backend API để tự tạo ID (nếu trống) & trích xuất embedding khuôn mặt (3 góc eKYC hoặc đơn lẻ)
+  const formData = new FormData();
+  if (cleanId) formData.append('staff_id', cleanId);
+  formData.append('staff_name', cleanName);
+  formData.append('role', sRole);
+  formData.append('pen_id', sPenId);
+
+  if (fThang && fTrai && fPhai) {
+    formData.append('file_thang', fThang);
+    formData.append('file_nghieng_trai', fTrai);
+    formData.append('file_nghieng_phai', fPhai);
+  } else if (fSingle) {
+    formData.append('file', fSingle);
+  } else if (fThang) {
+    formData.append('file', fThang);
   }
 
-  // 2. Gửi sang Backend API để trích xuất embedding khuôn mặt (3 góc eKYC hoặc đơn lẻ)
   let backendRes: any = null;
   try {
-    const formData = new FormData();
-    formData.append('staff_id', cleanId);
-    formData.append('staff_name', cleanName);
-    formData.append('role', sRole);
-    formData.append('pen_id', sPenId);
-
-    if (fThang && fTrai && fPhai) {
-      formData.append('file_thang', fThang);
-      formData.append('file_nghieng_trai', fTrai);
-      formData.append('file_nghieng_phai', fPhai);
-    } else if (fSingle) {
-      formData.append('file', fSingle);
-    } else if (fThang) {
-      formData.append('file', fThang);
-    }
-
     const res = await fetch(`${BACKEND_URL}/api/staff/enroll`, {
       method: 'POST',
       body: formData,
     });
+    const json = await res.json().catch(() => ({}));
     if (res.ok) {
-      backendRes = await res.json();
+      backendRes = json;
+    } else if (res.status >= 400 && res.status < 500) {
+      throw new Error(json.detail || json.message || `Lỗi đăng ký khuôn mặt (${res.status})`);
     }
-  } catch (backendErr) {
-    console.warn('Backend enroll warning:', backendErr);
+  } catch (err: any) {
+    if (err?.message && !err.message.includes('Failed to fetch') && !err.message.includes('NetworkError')) {
+      throw err;
+    }
+  }
+
+  let finalId = String(backendRes?.staff?.id || cleanId || '');
+
+  // Fallback gọi trực tiếp Face AI Engine (:10000/api/v1/faces/enroll) nếu Backend (:8443) không phản hồi
+  if (!backendRes) {
+    if (!finalId) {
+      const { data: rows } = await supabase.from('staff').select('id');
+      const maxNum = (rows || []).reduce((m: number, r: any) => {
+        const n = /^\d+$/.test(String(r.id || '').trim()) ? Number(r.id) : 0;
+        return Math.max(m, n);
+      }, 0);
+      finalId = String(maxNum + 1);
+    }
+    const faceFd = new FormData();
+    faceFd.append('student_id', finalId);
+    faceFd.append('student_name', cleanName);
+    if (fThang && fTrai && fPhai) {
+      faceFd.append('file_thang', fThang);
+      faceFd.append('file_nghieng_trai', fTrai);
+      faceFd.append('file_nghieng_phai', fPhai);
+    } else if (fSingle) {
+      faceFd.append('file', fSingle);
+    } else if (fThang) {
+      faceFd.append('file', fThang);
+    }
+    const faceRes = await fetch(`${FACE_API_URL}/api/v1/faces/enroll`, {
+      method: 'POST',
+      body: faceFd,
+    });
+    const faceJson = await faceRes.json().catch(() => ({}));
+    if (!faceRes.ok) {
+      throw new Error(faceJson.detail || faceJson.message || `Lỗi Face AI (${faceRes.status})`);
+    }
+    backendRes = faceJson;
+  }
+  if (finalId) {
+    try {
+      await supabase.from('staff').upsert({
+        id: finalId,
+        name: cleanName,
+        role: sRole.trim(),
+        pen_id: sPenId || '123',
+        created_at: new Date().toISOString(),
+      }, { onConflict: 'id' });
+    } catch (supaErr) {
+      console.error('Error saving new staff to Supabase:', supaErr);
+    }
   }
 
   return {
     status: 'success',
-    staff: { id: cleanId, name: cleanName, role: sRole, pen_id: sPenId },
+    staff: backendRes?.staff || { id: finalId, name: cleanName, role: sRole, pen_id: sPenId },
     backend: backendRes,
   };
 }
@@ -1299,28 +1339,81 @@ export interface StaffWageItem {
 }
 
 export async function fetchStaffListWithWageAPI(): Promise<StaffWageItem[]> {
+  try {
+    const { data, error } = await supabase.from('staff').select('*').order('id');
+    if (!error && data && data.length > 0) {
+      return data.map((row: any) => ({
+        id: row.id,
+        name: row.name,
+        role: row.role,
+        pen_id: row.pen_id,
+        daily_wage: row.daily_wage ?? 300000,
+      }));
+    }
+  } catch (supaErr) {
+    console.warn('Supabase fetchStaffListWithWageAPI warning:', supaErr);
+  }
+
   const res = await fetch(`${BACKEND_URL}/api/staff`, { cache: 'no-store' });
   if (!res.ok) throw new Error('Không thể tải danh sách nhân sự');
   return await res.json();
 }
 
 export async function fetchTodayAttendanceAPI(): Promise<any[]> {
+  try {
+    const today = new Date().toLocaleDateString('en-CA');
+    const { data, error } = await supabase
+      .from('staff_attendance')
+      .select('*')
+      .gte('created_at', `${today}T00:00:00`)
+      .order('created_at', { ascending: false });
+    if (!error && data) {
+      return data;
+    }
+  } catch (supaErr) {
+    console.warn('Supabase fetchTodayAttendanceAPI warning:', supaErr);
+  }
+
   const res = await fetch(`${BACKEND_URL}/api/staff/attendance`, { cache: 'no-store' });
   if (!res.ok) return [];
   return await res.json();
 }
 
 export async function updateStaffWageAPI(staffId: string, dailyWage: number): Promise<StaffWageItem> {
-  const res = await fetch(`${BACKEND_URL}/api/staff/${encodeURIComponent(staffId)}/wage`, {
-    method: 'PATCH',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ daily_wage: dailyWage }),
-  });
-  if (!res.ok) {
-    const err = await res.json().catch(() => ({}));
-    throw new Error(err.detail || 'Lỗi khi cập nhật tiền công nhân sự');
+  const wageInt = Math.max(0, Math.round(dailyWage));
+  let supaStaff: StaffWageItem | null = null;
+  try {
+    const { data, error } = await supabase
+      .from('staff')
+      .update({ daily_wage: wageInt })
+      .eq('id', staffId)
+      .select()
+      .single();
+    if (!error && data) {
+      supaStaff = data as StaffWageItem;
+    }
+  } catch (supaErr) {
+    console.warn('Supabase updateStaffWageAPI warning:', supaErr);
   }
-  const data = await res.json();
-  return data.staff;
+
+  try {
+    const res = await fetch(`${BACKEND_URL}/api/staff/${encodeURIComponent(staffId)}/wage`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ daily_wage: wageInt }),
+    });
+    if (res.ok) {
+      const data = await res.json();
+      return data.staff || supaStaff || { id: staffId, name: staffId, daily_wage: wageInt };
+    }
+    if (!supaStaff) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.detail || 'Lỗi khi cập nhật tiền công nhân sự');
+    }
+  } catch (err) {
+    if (!supaStaff) throw err;
+  }
+
+  return supaStaff!;
 }
 

@@ -67,7 +67,7 @@ interface FarmApiService {
     @Multipart
     @POST("/api/staff/enroll")
     suspend fun enrollStaffFace(
-        @Part("staff_id") staffId: RequestBody,
+        @Part("staff_id") staffId: RequestBody?,
         @Part("staff_name") staffName: RequestBody,
         @Part("role") role: RequestBody,
         @Part("pen_id") penId: RequestBody,
