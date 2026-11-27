@@ -38,12 +38,23 @@ const PREVIEW_TABS: Array<{ id: PreviewTab; label: string; desc: string }> = [
 
 export default function DeviceShowcase3D() {
   const [activeTab, setActiveTab] = useState<PreviewTab>('iot');
-  const [rot, setRot] = useState({ x: 8, y: -12 });
+  const [dragging, setDragging] = useState(false);
+  const rotRef = useRef({ x: 8, y: -12 });
+  const assemblyRef = useRef<HTMLDivElement | null>(null);
+  const rafRef = useRef(0);
   const isDragging = useRef(false);
   const lastPos = useRef({ x: 0, y: 0 });
 
+  const applyTransform = () => {
+    rafRef.current = 0;
+    if (assemblyRef.current) {
+      assemblyRef.current.style.transform = `rotateX(${rotRef.current.x}deg) rotateY(${rotRef.current.y}deg)`;
+    }
+  };
+
   const handlePointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
     isDragging.current = true;
+    setDragging(true);
     lastPos.current = { x: e.clientX, y: e.clientY };
     (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
   };
@@ -53,14 +64,23 @@ export default function DeviceShowcase3D() {
     const dx = e.clientX - lastPos.current.x;
     const dy = e.clientY - lastPos.current.y;
     lastPos.current = { x: e.clientX, y: e.clientY };
-    setRot((prev) => ({
-      x: Math.max(-18, Math.min(22, prev.x - dy * 0.25)),
-      y: Math.max(-32, Math.min(32, prev.y + dx * 0.3)),
-    }));
+    rotRef.current = {
+      x: Math.max(-18, Math.min(22, rotRef.current.x - dy * 0.25)),
+      y: Math.max(-32, Math.min(32, rotRef.current.y + dx * 0.3)),
+    };
+    if (!rafRef.current) {
+      rafRef.current = requestAnimationFrame(applyTransform);
+    }
   };
 
   const handlePointerUp = () => {
     isDragging.current = false;
+    setDragging(false);
+  };
+
+  const handleReset = () => {
+    rotRef.current = { x: 8, y: -12 };
+    applyTransform();
   };
 
   return (
@@ -94,7 +114,7 @@ export default function DeviceShowcase3D() {
           </span>
           <button
             type="button"
-            onClick={() => setRot({ x: 8, y: -12 })}
+            onClick={handleReset}
             className="inline-flex items-center gap-1 rounded-full border border-farm-line bg-white px-2.5 py-1.5 hover:bg-farm-50 text-farm-ink transition cursor-pointer"
             title="Đặt lại góc nhìn"
           >
@@ -130,10 +150,13 @@ export default function DeviceShowcase3D() {
 
         {/* 3D Rotatable Assembly */}
         <div
-          className="relative mx-auto flex flex-col lg:flex-row items-center justify-center gap-8 lg:gap-6 transition-transform duration-150 ease-out"
+          ref={assemblyRef}
+          className={`relative mx-auto flex flex-col lg:flex-row items-center justify-center gap-8 lg:gap-6 will-change-transform ${
+            dragging ? '' : 'transition-transform duration-150 ease-out'
+          }`}
           style={{
             transformStyle: 'preserve-3d',
-            transform: `rotateX(${rot.x}deg) rotateY(${rot.y}deg)`,
+            transform: `rotateX(${rotRef.current.x}deg) rotateY(${rotRef.current.y}deg)`,
           }}
         >
           {/* 3D LAPTOP MOCKUP (Web Dashboard) */}

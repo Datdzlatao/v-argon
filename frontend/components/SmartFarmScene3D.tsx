@@ -39,9 +39,9 @@ export default function SmartFarmScene3D({ scrollProgress }: SmartFarmScene3DPro
     const width = container.clientWidth || window.innerWidth;
     const height = container.clientHeight || window.innerHeight;
     renderer.setSize(width, height);
-    renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 1.5));
     renderer.shadowMap.enabled = true;
-    renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+    renderer.shadowMap.type = THREE.PCFShadowMap;
     renderer.toneMapping = THREE.ACESFilmicToneMapping;
     renderer.toneMappingExposure = 1.15;
     container.innerHTML = '';
@@ -63,8 +63,8 @@ export default function SmartFarmScene3D({ scrollProgress }: SmartFarmScene3DPro
     const sunLight = new THREE.DirectionalLight(0xfffbeb, 2.3);
     sunLight.position.set(22, 28, -14);
     sunLight.castShadow = true;
-    sunLight.shadow.mapSize.width = 2048;
-    sunLight.shadow.mapSize.height = 2048;
+    sunLight.shadow.mapSize.width = 1024;
+    sunLight.shadow.mapSize.height = 1024;
     sunLight.shadow.camera.near = 2;
     sunLight.shadow.camera.far = 90;
     const d = 30;
@@ -164,13 +164,12 @@ export default function SmartFarmScene3D({ scrollProgress }: SmartFarmScene3DPro
       0x16a34a, // Deep Lush Green
     ];
     const bundMat = new THREE.MeshStandardMaterial({ color: 0x854d0e, roughness: 0.9 });
-    const waterMat = new THREE.MeshPhysicalMaterial({
+    const waterMat = new THREE.MeshStandardMaterial({
       color: 0x38bdf8,
-      roughness: 0.08,
-      metalness: 0.1,
-      transmission: 0.35,
+      roughness: 0.12,
+      metalness: 0.15,
       transparent: true,
-      opacity: 0.88,
+      opacity: 0.85,
     });
 
     const terraceCount = 9;
@@ -180,7 +179,7 @@ export default function SmartFarmScene3D({ scrollProgress }: SmartFarmScene3DPro
       const elevation = t * 0.52;
 
       // Soil terrace wall / ridge (bờ ruộng)
-      const bundGeo = new THREE.CylinderGeometry(radiusX + 0.28, radiusX + 0.45, 0.58, 40);
+      const bundGeo = new THREE.CylinderGeometry(radiusX + 0.28, radiusX + 0.45, 0.58, 28);
       bundGeo.scale(1, 1, radiusZ / radiusX);
       const bund = new THREE.Mesh(bundGeo, bundMat);
       bund.position.set(Math.sin(t * 0.4) * 1.1, elevation - 0.15, -t * 0.65);
@@ -196,7 +195,7 @@ export default function SmartFarmScene3D({ scrollProgress }: SmartFarmScene3DPro
             color: terracePalette[t % terracePalette.length],
             roughness: 0.72,
           });
-      const surfaceGeo = new THREE.CylinderGeometry(radiusX, radiusX, 0.14, 40);
+      const surfaceGeo = new THREE.CylinderGeometry(radiusX, radiusX, 0.14, 28);
       surfaceGeo.scale(1, 1, radiusZ / radiusX);
       const surface = new THREE.Mesh(surfaceGeo, surfaceMat);
       surface.position.set(Math.sin(t * 0.4) * 1.1, elevation + 0.12, -t * 0.65);
@@ -217,20 +216,37 @@ export default function SmartFarmScene3D({ scrollProgress }: SmartFarmScene3DPro
     canalMesh.receiveShadow = true;
     worldGroup.add(canalMesh);
 
-    // --- INSTANCED SWAYING CROP STALKS (LÚA / CÂY TRỒNG) ---
-    const stalkCount = 1200;
-    const stalkGeo = new THREE.ConeGeometry(0.14, 0.75, 5);
-    stalkGeo.translate(0, 0.37, 0);
+    // --- INSTANCED SWAYING CROP STALKS (GPU-ANIMATED FOR 60FPS) ---
+    const stalkCount = 650;
+    const stalkGeo = new THREE.ConeGeometry(0.16, 0.78, 4);
+    stalkGeo.translate(0, 0.39, 0);
+    const stalkUniforms = { uTime: { value: 0 } };
     const stalkMat = new THREE.MeshStandardMaterial({
       color: 0xffffff,
       roughness: 0.65,
     });
+    stalkMat.onBeforeCompile = (shader) => {
+      shader.uniforms.uTime = stalkUniforms.uTime;
+      shader.vertexShader =
+        'uniform float uTime;\n' +
+        shader.vertexShader.replace(
+          '#include <begin_vertex>',
+          `
+          #include <begin_vertex>
+          float swayAmt = position.y;
+          #ifdef USE_INSTANCING
+            float phase = instanceMatrix[3][0] * 0.35 + instanceMatrix[3][2] * 0.35;
+          #else
+            float phase = 0.0;
+          #endif
+          transformed.x += sin(uTime * 2.0 + phase) * 0.14 * swayAmt;
+          transformed.z += cos(uTime * 1.6 + phase) * 0.10 * swayAmt;
+          `
+        );
+    };
     const stalks = new THREE.InstancedMesh(stalkGeo, stalkMat, stalkCount);
-    stalks.castShadow = true;
-    stalks.receiveShadow = true;
 
     const dummy = new THREE.Object3D();
-    const stalkBaseData: Array<{ x: number; y: number; z: number; s: number; phase: number }> = [];
     const colorChoices = [
       new THREE.Color(0x22c55e),
       new THREE.Color(0x4ade80),
@@ -240,25 +256,35 @@ export default function SmartFarmScene3D({ scrollProgress }: SmartFarmScene3DPro
 
     for (let i = 0; i < stalkCount; i++) {
       const tIdx = i % terraceCount;
+      let sx: number;
+      let sy: number;
+      let sz: number;
+      let s: number;
       if (tIdx === 2 || tIdx === 5) {
         // Place on outer meadow instead of water terrace
         const ang = (i * 2.39996) % (Math.PI * 2);
         const rad = 29 + (i % 12);
-        const sx = Math.cos(ang) * rad;
-        const sz = Math.sin(ang) * rad * 0.8;
-        stalkBaseData.push({ x: sx, y: -0.2, z: sz, s: 0.9 + (i % 4) * 0.15, phase: i * 0.17 });
+        sx = Math.cos(ang) * rad;
+        sy = -0.2;
+        sz = Math.sin(ang) * rad * 0.8;
+        s = 0.9 + (i % 4) * 0.15;
       } else {
         const radiusX = 27.2 - tIdx * 2.55;
         const radiusZ = 21.2 - tIdx * 1.95;
         const ang = (i * 2.39996) % (Math.PI * 2);
         const ringRatio = 0.88 + ((i % 7) / 7) * 0.1;
-        const sx = Math.sin(tIdx * 0.4) * 1.1 + Math.cos(ang) * radiusX * ringRatio;
-        const sz = -tIdx * 0.65 + Math.sin(ang) * radiusZ * ringRatio;
-        const sy = tIdx * 0.52 + 0.18;
-        stalkBaseData.push({ x: sx, y: sy, z: sz, s: 0.85 + (i % 5) * 0.14, phase: i * 0.23 });
+        sx = Math.sin(tIdx * 0.4) * 1.1 + Math.cos(ang) * radiusX * ringRatio;
+        sz = -tIdx * 0.65 + Math.sin(ang) * radiusZ * ringRatio;
+        sy = tIdx * 0.52 + 0.18;
+        s = 0.85 + (i % 5) * 0.14;
       }
+      dummy.position.set(sx, sy, sz);
+      dummy.scale.setScalar(s);
+      dummy.updateMatrix();
+      stalks.setMatrixAt(i, dummy.matrix);
       stalks.setColorAt(i, colorChoices[i % colorChoices.length]);
     }
+    stalks.instanceMatrix.needsUpdate = true;
     if (stalks.instanceColor) stalks.instanceColor.needsUpdate = true;
     worldGroup.add(stalks);
 
@@ -556,27 +582,29 @@ export default function SmartFarmScene3D({ scrollProgress }: SmartFarmScene3DPro
       window.matchMedia('(prefers-reduced-motion: reduce)').matches;
 
     let animId = 0;
-    const clock = new THREE.Clock();
+    let isVisible = true;
+    let isTabVisible = typeof document !== 'undefined' ? !document.hidden : true;
+    let elapsed = 0;
+    let lastTime = performance.now();
     const targetLook = new THREE.Vector3(0, 2.5, -4);
     const currentLook = new THREE.Vector3(0, 2.5, -4);
 
-    const animate = () => {
+    const animate = (now: number) => {
+      if (!isVisible || !isTabVisible) {
+        animId = 0;
+        return;
+      }
       animId = requestAnimationFrame(animate);
-      const t = clock.getElapsedTime();
+
+      const delta = Math.min((now - lastTime) / 1000, 0.05);
+      lastTime = now;
+      elapsed += delta;
+      const t = elapsed;
       const p = Math.max(0, Math.min(1, progressRef.current));
 
       if (!reducedMotion) {
-        // Gentle breeze rippling across all 1200 crop stalks
-        for (let i = 0; i < stalkCount; i++) {
-          const item = stalkBaseData[i];
-          dummy.position.set(item.x, item.y, item.z);
-          dummy.scale.setScalar(item.s);
-          dummy.rotation.z = Math.sin(t * 2.0 + item.phase + item.x * 0.15) * 0.12;
-          dummy.rotation.x = Math.cos(t * 1.6 + item.phase + item.z * 0.15) * 0.08;
-          dummy.updateMatrix();
-          stalks.setMatrixAt(i, dummy.matrix);
-        }
-        stalks.instanceMatrix.needsUpdate = true;
+        // GPU-driven gentle breeze rippling across crop stalks
+        stalkUniforms.uTime.value = t;
 
         // Drift clouds gently
         cloudGroup.children.forEach((c, idx) => {
@@ -635,23 +663,46 @@ export default function SmartFarmScene3D({ scrollProgress }: SmartFarmScene3DPro
 
       const dragX = dragOffsetRef.current.x;
       const dragY = dragOffsetRef.current.y;
+      const damp = 1 - Math.exp(-10 * delta);
 
-      camera.position.x = THREE.MathUtils.lerp(camera.position.x, camX + dragX * 10, 0.07);
+      camera.position.x = THREE.MathUtils.lerp(camera.position.x, camX + dragX * 10, damp);
       camera.position.y = THREE.MathUtils.lerp(
         camera.position.y,
         Math.max(houseCenter.y + 1.2, camY - dragY * 5),
-        0.07
+        damp
       );
-      camera.position.z = THREE.MathUtils.lerp(camera.position.z, camZ, 0.07);
+      camera.position.z = THREE.MathUtils.lerp(camera.position.z, camZ, damp);
 
       targetLook.set(lookX, lookY, lookZ);
-      currentLook.lerp(targetLook, 0.07);
+      currentLook.lerp(targetLook, damp);
       camera.lookAt(currentLook);
 
       renderer.render(scene, camera);
     };
 
-    animate();
+    const startLoop = () => {
+      if (!animId && isVisible && isTabVisible) {
+        lastTime = performance.now();
+        animId = requestAnimationFrame(animate);
+      }
+    };
+
+    const observer = new IntersectionObserver(
+      (entries) => {
+        isVisible = entries[0]?.isIntersecting ?? true;
+        if (isVisible) startLoop();
+      },
+      { threshold: 0.01 }
+    );
+    observer.observe(container);
+
+    const handleVisibility = () => {
+      isTabVisible = !document.hidden;
+      if (isTabVisible) startLoop();
+    };
+    document.addEventListener('visibilitychange', handleVisibility);
+
+    startLoop();
 
     const handleResize = () => {
       if (!container) return;
@@ -665,7 +716,21 @@ export default function SmartFarmScene3D({ scrollProgress }: SmartFarmScene3DPro
 
     return () => {
       cancelAnimationFrame(animId);
+      observer.disconnect();
+      document.removeEventListener('visibilitychange', handleVisibility);
       window.removeEventListener('resize', handleResize);
+      scene.traverse((obj) => {
+        if ((obj as THREE.Mesh).isMesh) {
+          const mesh = obj as THREE.Mesh;
+          mesh.geometry?.dispose();
+          if (Array.isArray(mesh.material)) {
+            mesh.material.forEach((m) => m.dispose());
+          } else {
+            mesh.material?.dispose();
+          }
+        }
+      });
+      holoTexture.dispose();
       renderer.dispose();
     };
   }, []);
