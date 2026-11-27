@@ -1,9 +1,15 @@
 import logging
+import re
 from typing import Any, Optional
 from datetime import datetime, timezone
 from app.db.supabase_client import get_supabase_client
 
 logger = logging.getLogger("smart_manager.repo.pens")
+_UUID_RE = re.compile(r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$")
+
+
+def _is_valid_uuid(val: Optional[str]) -> bool:
+    return bool(val and _UUID_RE.match(str(val).strip()))
 
 # Danh sách đa dạng các chuồng trại / khu vực nuôi trồng
 _PENS_FALLBACK = [
@@ -40,26 +46,33 @@ class PensRepository:
         return get_supabase_client()
 
     def list_all(self, user_id: Optional[str] = None) -> list[dict[str, Any]]:
-        """List all pens, optionally isolated by user_id."""
+        """List all pens, strictly isolated by user_id when provided."""
+        clean_uid = str(user_id).strip() if user_id else None
         pens: list[dict[str, Any]] = []
-        try:
-            query = self.client.table(self._table).select("*")
-            if user_id:
-                query = query.eq("user_id", str(user_id).strip())
-            response = query.order("id").execute()
-            if response.data is not None:
-                if user_id:
-                    pens = response.data
-                else:
+        if clean_uid:
+            if _is_valid_uuid(clean_uid):
+                try:
+                    response = self.client.table(self._table).select("*").eq("user_id", clean_uid).order("id").execute()
+                    if response.data is not None:
+                        pens = response.data
+                except Exception as e:
+                    logger.warning(f"Error fetching user pens from Supabase: {e}")
+                    pens = [fb for fb in _PENS_FALLBACK if fb.get("user_id") == clean_uid]
+            else:
+                pens = [fb for fb in _PENS_FALLBACK if fb.get("user_id") == clean_uid]
+        else:
+            try:
+                response = self.client.table(self._table).select("*").order("id").execute()
+                if response.data is not None:
                     existing_ids = {str(p.get("id")).strip() for p in response.data}
                     combined = list(response.data)
                     for fb in _PENS_FALLBACK:
                         if fb["id"] not in existing_ids:
                             combined.append(fb)
                     pens = combined
-        except Exception as e:
-            logger.warning(f"Error fetching pens from Supabase: {e}. Using fallback.")
-            pens = [fb for fb in _PENS_FALLBACK if not user_id or fb.get("user_id") == user_id]
+            except Exception as e:
+                logger.warning(f"Error fetching pens from Supabase: {e}. Using fallback.")
+                pens = list(_PENS_FALLBACK)
 
         # Gắn kèm camera_url và webcam_url từ bộ nhớ cache nếu cột trong Supabase chưa sẵn sàng
         for p in pens:
@@ -72,22 +85,29 @@ class PensRepository:
                 p["webcam_url"] = "0"
         return pens
 
-    def get_by_id(self, pen_id: str) -> Optional[dict[str, Any]]:
-        """Get pen by ID."""
+    def get_by_id(self, pen_id: str, user_id: Optional[str] = None) -> Optional[dict[str, Any]]:
+        """Get pen by ID, optionally verifying ownership by user_id."""
         clean_id = pen_id.strip()
+        clean_uid = str(user_id).strip() if user_id else None
         pen = None
         try:
-            response = self.client.table(self._table).select("*").eq("id", clean_id).limit(1).execute()
+            query = self.client.table(self._table).select("*").eq("id", clean_id)
+            if clean_uid and _is_valid_uuid(clean_uid):
+                query = query.eq("user_id", clean_uid)
+            response = query.limit(1).execute()
             if response.data and len(response.data) > 0:
                 pen = response.data[0]
         except Exception as e:
             logger.warning(f"Error getting pen {clean_id}: {e}")
 
         if not pen:
-            for p in self.list_all():
+            for p in self.list_all(user_id=clean_uid):
                 if str(p.get("id")).strip().lower() == clean_id.lower():
                     pen = p
                     break
+
+        if pen and clean_uid and str(pen.get("user_id") or "").strip() != clean_uid:
+            return None
 
         if pen:
             if not pen.get("camera_url") and clean_id in _PEN_CAMERAS:

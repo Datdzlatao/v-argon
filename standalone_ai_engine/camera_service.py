@@ -10,11 +10,52 @@ Tính năng:
 - Cung cấp API trạng thái, dữ liệu telemetries (FPS, MSSV, tên, đồng phục) theo thời gian thực.
 """
 import cv2
+import ipaddress
+import socket
 import time
 import threading
+from urllib.parse import urlparse
 import numpy as np
 from typing import Optional, Union, Dict, Any, Generator
 from standalone_runner import StandaloneVisionPipeline
+
+
+def validate_camera_source(source: Union[int, str]) -> Union[int, str]:
+    """Validate camera source to prevent SSRF (loopback/metadata) and local file read."""
+    raw = str(source).strip() if source is not None else "0"
+    if not raw:
+        return 0
+    if raw.isdigit():
+        idx = int(raw)
+        if 0 <= idx <= 16:
+            return idx
+        raise ValueError("Chỉ số webcam không hợp lệ (chỉ hỗ trợ 0-16).")
+
+    parsed = urlparse(raw)
+    if parsed.scheme.lower() not in ("http", "https", "rtsp", "rtmp"):
+        raise ValueError("Chỉ hỗ trợ nguồn camera http, https, rtsp, rtmp hoặc chỉ số webcam.")
+
+    hostname = (parsed.hostname or "").strip().lower()
+    if not hostname:
+        raise ValueError("Địa chỉ camera thiếu hostname.")
+    if hostname in ("localhost", "metadata.google.internal", "metadata"):
+        raise ValueError("Không cho phép kết nối camera tới địa chỉ nội bộ/metadata.")
+
+    try:
+        ip_obj = ipaddress.ip_address(hostname)
+        if ip_obj.is_loopback or ip_obj.is_link_local or ip_obj.is_unspecified:
+            raise ValueError("Không cho phép kết nối camera tới loopback hoặc link-local/metadata IP.")
+    except ValueError as exc:
+        if "Không cho phép" in str(exc):
+            raise
+        try:
+            for info in socket.getaddrinfo(hostname, None):
+                resolved_ip = ipaddress.ip_address(info[4][0])
+                if resolved_ip.is_loopback or resolved_ip.is_link_local or resolved_ip.is_unspecified:
+                    raise ValueError("Hostname camera phân giải tới địa chỉ bị chặn (loopback/metadata).")
+        except socket.gaierror:
+            pass
+    return raw
 
 
 class CameraStreamService:
@@ -49,7 +90,7 @@ class CameraStreamService:
 
     def start(self, source: Union[int, str] = 0, weekday_override: Optional[int] = None) -> bool:
         """Khởi động luồng camera và tiến trình AI nền."""
-        src_val = int(source) if str(source).isdigit() else str(source).strip()
+        src_val = validate_camera_source(source)
 
         with self.lock:
             if self.is_running and self.source == src_val:

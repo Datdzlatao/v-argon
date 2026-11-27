@@ -1,0 +1,56 @@
+{
+  "brand": "V-ARGON",
+  "tagline": "Smart Agriculture AI — Quản lý Nông trại Thông minh",
+  "brief": "Thiết kế lại nhận diện thương hiệu cho nền tảng quản lý chăn nuôi, trồng trọt, camera AI và cảm biến IoT đa nền tảng (Web, iOS, Android). Loại bỏ biểu tượng ngôi sao 4 cánh dễ nhầm với Gemini để xây dựng dấu hiệu riêng gắn với tên thương hiệu và sắc nét ở mọi kích thước.",
+  "adjectives": [
+    "Vững chãi",
+    "Tinh anh",
+    "Sinh sôi",
+    "Tin cậy"
+  ],
+  "criteria": "Không nhầm với Gemini hay các icon AI phổ thông; nhận diện ngay chữ V và mầm sống; đọc rõ ở 16 px; giữ bản sắc xanh nông nghiệp của hệ thống.",
+  "mockups": [
+    "app-icon",
+    "website",
+    "favicon-tab",
+    "social",
+    "badge",
+    "signage"
+  ],
+  "nav": [
+    "Trang trại",
+    "Camera AI",
+    "Vật tư"
+  ],
+  "brand_color": "#15803D",
+  "tile_color": "#15803D",
+  "greyscale": false,
+  "final": true,
+  "designer": "Antigravity Brand Studio",
+  "deck_title": "Bộ Nhận Diện Thương Hiệu Chính Thức (Mầm Chữ V)",
+  "concepts": [
+    {
+      "name": "Mầm Chữ V (V-Sprout)",
+      "symbol": "digital/v-argon-symbol-color.svg",
+      "lockup": "digital/v-argon-horizontal-color.svg",
+      "stacked": "digital/v-argon-stacked-color.svg",
+      "avatar": "digital/v-argon-symbol-small.svg",
+      "symbol_on_tile": "digital/v-argon-symbol-white.svg",
+      "symbol_on_dark": "digital/v-argon-symbol-dark.svg",
+      "lockup_on_dark": "digital/v-argon-horizontal-dark.svg",
+      "stacked_on_dark": "digital/v-argon-stacked-dark.svg",
+      "idea": "Chữ V của V-ARGON được tạo hình từ đôi lá non đối xứng ôm trọn hạt mầm vươn lên ở trung tâm.",
+      "rationale": [
+        "Gắn liền trực tiếp chữ cái V của thương hiệu với hình ảnh mầm xanh nông nghiệp — hoàn toàn không trùng lặp với ngôi sao Gemini.",
+        "Chế tác hình học 60°/120° chỉ với 13 điểm neo; giữ khoảng thở âm rộng giúp đọc sắc nét xuống tới 16×16 px.",
+        "Bảng màu Emerald (#15803D) & Sprout (#22C55E) kết hợp Forest Ink (#14211A) đồng bộ 100% với Web Dashboard, PWA iOS và Android Native.",
+        "Đầy đủ biến thể: lockup ngang, lockup kèm tagline, xếp dọc, bản cỡ nhỏ (favicon), bản âm bản đã bù tán xạ ánh sáng (irradiation)."
+      ]
+    }
+  ],
+  "recommendation": "Phương án Mầm Chữ V đã sẵn sàng triển khai đồng bộ trên Web Dashboard, PWA iOS, ứng dụng Android và tài liệu truyền thông.",
+  "next_steps": [
+    "Tra cứu đăng ký nhãn hiệu & đối chiếu hình ảnh trước khi công bố rộng rãi",
+    "In thử bảng màu (CMYK / Pantone 348 C & 7480 C) nếu triển khai biển hiệu trang trại hoặc đồng phục"
+  ]
+}

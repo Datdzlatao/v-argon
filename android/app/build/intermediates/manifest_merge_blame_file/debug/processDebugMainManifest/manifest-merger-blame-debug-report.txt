@@ -52,14 +52,14 @@
 30-->[androidx.core:core:1.13.1] /home/dat/.gradle/caches/transforms-4/248a52d80cb1f06f480533f892a0dd7f/transformed/core-1.13.1/AndroidManifest.xml:28:18-86
 31        android:debuggable="true"
 32        android:extractNativeLibs="false"
-33        android:icon="@android:drawable/sym_def_app_icon"
-33-->/home/dat/n-ng-c-p/android/app/src/main/AndroidManifest.xml:15:9-58
+33        android:icon="@mipmap/ic_launcher"
+33-->/home/dat/n-ng-c-p/android/app/src/main/AndroidManifest.xml:15:9-43
 34        android:label="@string/app_name"
 34-->/home/dat/n-ng-c-p/android/app/src/main/AndroidManifest.xml:16:9-41
 35        android:networkSecurityConfig="@xml/network_security_config"
 35-->/home/dat/n-ng-c-p/android/app/src/main/AndroidManifest.xml:20:9-69
-36        android:roundIcon="@android:drawable/sym_def_app_icon"
-36-->/home/dat/n-ng-c-p/android/app/src/main/AndroidManifest.xml:17:9-63
+36        android:roundIcon="@mipmap/ic_launcher_round"
+36-->/home/dat/n-ng-c-p/android/app/src/main/AndroidManifest.xml:17:9-54
 37        android:supportsRtl="true"
 37-->/home/dat/n-ng-c-p/android/app/src/main/AndroidManifest.xml:18:9-35
 38        android:theme="@style/Theme.SmartFarm"

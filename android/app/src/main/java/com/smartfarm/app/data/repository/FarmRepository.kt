@@ -85,35 +85,31 @@ class FarmRepository(
     val wsConnected: Flow<Boolean> = webSocketManager.connectionStatus
 
     // ==========================================
-    // 1. PENS & AREAS
+    // 1. PENS & AREAS (Isolated strictly per user_id)
     // ==========================================
     suspend fun getPens(mode: String, userId: String?): List<Pen> {
+        val cleanUid = userId?.trim()?.takeIf { it.isNotBlank() } ?: return emptyList()
         val typeToken = object : TypeToken<List<Pen>>() {}
-        // Lấy toàn bộ danh sách phân khu để không bị sót
-        val remotePens = supabase.queryList("pens", emptyMap(), typeToken)
-        if (remotePens.isNotEmpty()) {
-            return if (mode == "cultivation") {
-                val cult = remotePens.filter { it.type == "cultivation" || it.type == "crops" }
-                if (cult.isNotEmpty()) cult else remotePens
-            } else {
-                val live = remotePens.filter { it.type == "livestock" || it.type.isBlank() }
-                if (live.isNotEmpty()) live else remotePens
-            }
+        val remotePens = supabase.queryList("pens", mapOf("user_id" to "eq.$cleanUid"), typeToken)
+        val filtered = if (mode == "cultivation") {
+            remotePens.filter { it.type == "cultivation" || it.type == "crops" }
+        } else {
+            remotePens.filter { it.type == "livestock" || it.type.isBlank() }
+        }
+        if (filtered.isNotEmpty()) {
+            return filtered
         }
 
-        // Fallback Pens nếu hoàn toàn không kết nối được
-        return if (mode == "livestock") {
-            listOf(
-                Pen("PEN-A02", "Chuồng Nuôi Heo Thịt Khu A2", "livestock"),
-                Pen("123", "Chuồng Nuôi Heo Thịt Khu A1", "livestock"),
-                Pen("PEN-ISO-01", "Khu Cách Ly Y Tế / Heo Bệnh", "livestock")
-            )
-        } else {
-            listOf(
-                Pen("PEN-B01", "Khu Nhà Màng Dưa Lưới B1", "crops"),
-                Pen("Vườn01", "Vườn cà chua Thủy Canh", "cultivation")
-            )
-        }
+        // Khởi tạo chuồng/vườn mặc định riêng biệt gắn với user_id của chính user (kể cả chế độ trải nghiệm)
+        val modeTag = if (mode == "cultivation") "C1" else "L1"
+        val starterPen = Pen(
+            id = "PEN-${cleanUid.take(6).uppercase()}-$modeTag",
+            name = if (mode == "cultivation") "Vườn Cá Nhân Khu 1" else "Chuồng Cá Nhân Khu 1",
+            type = if (mode == "cultivation") "cultivation" else "livestock",
+            userId = cleanUid
+        )
+        createPen(starterPen)
+        return listOf(starterPen)
     }
 
     suspend fun createPen(pen: Pen): Boolean {
@@ -292,17 +288,28 @@ class FarmRepository(
     }
 
     // ==========================================
-    // 5. INVENTORY
+    // 5. INVENTORY (Isolated strictly per user_id)
     // ==========================================
-    suspend fun getInventory(): List<InventoryItem> {
+    suspend fun getInventory(userId: String? = null): List<InventoryItem> {
+        val cleanUid = userId?.trim()?.takeIf { it.isNotBlank() } ?: return emptyList()
         val typeToken = object : TypeToken<List<InventoryItem>>() {}
-        return supabase.queryList("inventory", emptyMap(), typeToken)
+        return supabase.queryList("inventory", mapOf("user_id" to "eq.$cleanUid"), typeToken)
     }
 
-    suspend fun importInventory(name: String, category: String, qty: Double, unit: String, price: Double): Boolean {
+    suspend fun importInventory(
+        name: String,
+        category: String,
+        qty: Double,
+        unit: String,
+        price: Double,
+        userId: String? = null
+    ): Boolean {
+        val cleanUid = userId?.trim()?.takeIf { it.isNotBlank() }
         val trimmedName = name.trim()
         val typeToken = object : TypeToken<List<InventoryItem>>() {}
-        val existingList = supabase.queryList("inventory", mapOf("name" to "eq.$trimmedName"), typeToken)
+        val filters = mutableMapOf("name" to "eq.$trimmedName")
+        if (cleanUid != null) filters["user_id"] = "eq.$cleanUid"
+        val existingList = supabase.queryList("inventory", filters, typeToken)
         val existingItem = existingList.firstOrNull()
 
         return if (existingItem != null && existingItem.id != null) {
@@ -313,7 +320,7 @@ class FarmRepository(
             if (price > 0) updatePayload["unit_price"] = price
             supabase.update("inventory", "id", existingItem.displayId, updatePayload)
         } else {
-            val payload = mapOf(
+            val payload = mutableMapOf<String, Any>(
                 "name" to trimmedName,
                 "category" to category.trim(),
                 "quantity" to qty,
@@ -322,6 +329,7 @@ class FarmRepository(
                 "min_threshold" to 10.0,
                 "location" to "Kho Chính"
             )
+            if (cleanUid != null) payload["user_id"] = cleanUid
             val ok = supabase.insert("inventory", payload)
             if (!ok) {
                 supabase.upsert("inventory", "name", payload)
@@ -658,10 +666,10 @@ class FarmRepository(
         }
     }
 
-    suspend fun getNewsfeedState(penId: String? = null, limit: Int = 12): NewsfeedState? {
+    suspend fun getNewsfeedState(penId: String? = null, limit: Int = 12, userId: String? = null): NewsfeedState? {
         return try {
             val cleanPen = if (penId.isNullOrBlank() || penId == "all") null else penId
-            val res = api.getNewsfeed(penId = cleanPen, limit = limit)
+            val res = api.getNewsfeed(penId = cleanPen, limit = limit, userId = userId)
             if (res.isSuccessful && res.body() != null) {
                 parseNewsfeedState(res.body()!!)
             } else null
@@ -688,10 +696,10 @@ class FarmRepository(
         )
     }
 
-    suspend fun getNewsfeed(penId: String? = null, limit: Int = 12): List<NewsfeedItem> {
+    suspend fun getNewsfeed(penId: String? = null, limit: Int = 12, userId: String? = null): List<NewsfeedItem> {
         return try {
             val cleanPen = if (penId.isNullOrBlank() || penId == "all") null else penId
-            val res = api.getNewsfeed(penId = cleanPen, limit = limit)
+            val res = api.getNewsfeed(penId = cleanPen, limit = limit, userId = userId)
             if (res.isSuccessful && res.body() != null) {
                 val arr = res.body()!!.getAsJsonArray("items") ?: return emptyList()
                 parseNewsfeedArray(arr)

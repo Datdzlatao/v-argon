@@ -1,6 +1,7 @@
 'use client';
 
 import React, { useEffect, useRef, useState } from 'react';
+import { VArgonLogo } from '../components/VArgonLogo';
 import {
   Home,
   Video,
@@ -140,10 +141,33 @@ export default function IosPwaPage() {
     } catch {}
   };
 
+function getOrCreatePwaUserId(): string {
+  if (typeof window === 'undefined') return '00000000-0000-4000-8000-000000000002';
+  try {
+    const key = 'vargon_ios_user_id';
+    const existing = window.localStorage.getItem(key);
+    if (existing && /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/.test(existing)) {
+      return existing;
+    }
+    const generated =
+      typeof window.crypto?.randomUUID === 'function'
+        ? window.crypto.randomUUID()
+        : 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => {
+            const r = (Math.random() * 16) | 0;
+            const v = c === 'x' ? r : (r & 0x3) | 0x8;
+            return v.toString(16);
+          });
+    window.localStorage.setItem(key, generated);
+    return generated;
+  } catch {
+    return '00000000-0000-4000-8000-000000000002';
+  }
+}
+
   useEffect(() => {
     loadDashboard(currentPenId || undefined);
     if (currentPenId) {
-      getChatHistory('ios_pwa_user', currentPenId).then((hist) => {
+      getChatHistory(getOrCreatePwaUserId(), currentPenId).then((hist) => {
         if (hist && hist.length > 0) {
           setMessages(hist.map((m: any) => ({ sender: m.sender, text: m.content })));
         }
@@ -152,7 +176,7 @@ export default function IosPwaPage() {
   }, [currentPenId]);
 
   const syncNewsfeed = async () => {
-    const state = await fetchNewsfeedState(12);
+    const state = await fetchNewsfeedState(12, getOrCreatePwaUserId());
     if (state) {
       setNewsfeedItems(state.items || []);
       if (state.summary_text) setNewsfeedSummary(state.summary_text);
@@ -425,17 +449,22 @@ export default function IosPwaPage() {
       {/* iOS Top Glass Navigation Bar */}
       <header className="sticky top-0 z-30 ios-glass ios-safe-top border-b border-black/10">
         <div className="px-4 py-2.5 flex items-center justify-between">
-          <div>
-            <p className="text-[11px] font-semibold uppercase tracking-wider text-emerald-600">
-              V-ARGON iOS
-            </p>
-            <h1 className="text-[20px] font-bold tracking-tight leading-tight">
-              {activeTab === 'home' && 'Tổng quan trang trại'}
-              {activeTab === 'camera' && 'Camera AI Giám sát'}
-              {activeTab === 'attendance' && 'Quét mặt & Bảo hộ'}
-              {activeTab === 'manage' && 'Quản lý chung'}
-              {activeTab === 'chat' && 'Trợ lý V-ARGON AI'}
-            </h1>
+          <div className="flex items-center gap-2.5">
+            <div className="w-8 h-8 rounded-xl bg-[#15803D] flex items-center justify-center shrink-0 shadow-sm">
+              <VArgonLogo className="w-4 h-4" variant="white" />
+            </div>
+            <div>
+              <p className="text-[11px] font-semibold uppercase tracking-wider text-emerald-700">
+                V-ARGON iOS
+              </p>
+              <h1 className="text-[20px] font-bold tracking-tight leading-tight">
+                {activeTab === 'home' && 'Tổng quan trang trại'}
+                {activeTab === 'camera' && 'Camera AI Giám sát'}
+                {activeTab === 'attendance' && 'Quét mặt & Bảo hộ'}
+                {activeTab === 'manage' && 'Quản lý chung'}
+                {activeTab === 'chat' && 'Trợ lý V-ARGON AI'}
+              </h1>
+            </div>
           </div>
           <div className="flex items-center gap-2">
             <span

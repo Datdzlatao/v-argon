@@ -1,6 +1,7 @@
 'use client';
 
 import React, { useEffect, useRef, useState } from 'react';
+import { VArgonLogo } from '../../components/VArgonLogo';
 import {
   Home,
   Video,
@@ -148,15 +149,58 @@ export default function IosPwaPage() {
     setIsStandalone(standalone);
   }, []);
 
-  // Load initial Pens + Farm Data from real FastAPI endpoints
+function getOrCreateIosUserId(): string {
+  if (typeof window === 'undefined') return '00000000-0000-4000-8000-000000000001';
+  try {
+    const key = 'vargon_ios_user_id';
+    const existing = window.localStorage.getItem(key);
+    if (existing && /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/.test(existing)) {
+      return existing;
+    }
+    const generated =
+      typeof window.crypto?.randomUUID === 'function'
+        ? window.crypto.randomUUID()
+        : 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => {
+            const r = (Math.random() * 16) | 0;
+            const v = c === 'x' ? r : (r & 0x3) | 0x8;
+            return v.toString(16);
+          });
+    window.localStorage.setItem(key, generated);
+    return generated;
+  } catch {
+    return '00000000-0000-4000-8000-000000000001';
+  }
+}
+
+  // Load initial Pens + Farm Data from real FastAPI endpoints (isolated by user_id)
   const loadFarmData = async (penIdOverride?: string) => {
     setIsLoading(true);
     try {
-      const pensRes = await fetch(`${BACKEND_URL}/api/pens`);
+      const uid = getOrCreateIosUserId();
+      const pensRes = await fetch(`${BACKEND_URL}/api/pens?user_id=${encodeURIComponent(uid)}`);
       let activePenId = penIdOverride || currentPenId;
       if (pensRes.ok) {
         const pensData = await pensRes.json();
-        const list = Array.isArray(pensData) ? pensData : pensData?.pens || [];
+        let list = Array.isArray(pensData) ? pensData : pensData?.pens || [];
+        if (list.length === 0) {
+          const starter = {
+            id: `PEN-${uid.slice(0, 6).toUpperCase()}-L1`,
+            name: 'Chuồng Cá Nhân Khu 1',
+            type: 'livestock',
+            user_id: uid,
+          };
+          const createdRes = await fetch(`${BACKEND_URL}/api/pens`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(starter),
+          }).catch(() => null);
+          if (createdRes?.ok) {
+            const createdJson = await createdRes.json();
+            list = [createdJson.pen || starter];
+          } else {
+            list = [starter];
+          }
+        }
         setPens(list);
         if (!activePenId && list.length > 0) {
           activePenId = list[0].id;
@@ -170,7 +214,7 @@ export default function IosPwaPage() {
         fetch(`${BACKEND_URL}/api/env/latest?limit=1${penQuery ? `&${penQuery}` : ''}`).then((r) => (r.ok ? r.json() : [])).catch(() => []),
         fetch(`${BACKEND_URL}/api/devices${penQuery ? `?${penQuery}` : ''}`).then((r) => (r.ok ? r.json() : [])).catch(() => []),
         fetch(`${BACKEND_URL}/api/alerts?limit=5`).then((r) => (r.ok ? r.json() : [])).catch(() => []),
-        fetch(`${BACKEND_URL}/api/inventory`).then((r) => (r.ok ? r.json() : [])).catch(() => []),
+        fetch(`${BACKEND_URL}/api/inventory?user_id=${encodeURIComponent(uid)}`).then((r) => (r.ok ? r.json() : [])).catch(() => []),
         fetch(`${BACKEND_URL}/api/schedules`).then((r) => (r.ok ? r.json() : [])).catch(() => []),
         fetch(`${BACKEND_URL}/api/animals${penQuery ? `?${penQuery}` : ''}`).then((r) => (r.ok ? r.json() : [])).catch(() => []),
         fetch(`${BACKEND_URL}/api/crops${penQuery ? `?${penQuery}` : ''}`).then((r) => (r.ok ? r.json() : [])).catch(() => []),
@@ -190,7 +234,7 @@ export default function IosPwaPage() {
       setAttendanceHistory(attLogs);
 
       if (activePenId) {
-        const hist = await getChatHistory('ios_pwa_user', activePenId);
+        const hist = await getChatHistory(uid, activePenId);
         if (hist.length > 0) {
           setMessages(hist.map((m) => ({ sender: m.sender, text: m.content })));
         }
@@ -203,7 +247,8 @@ export default function IosPwaPage() {
   };
 
   const syncNewsfeed = async () => {
-    const state = await fetchNewsfeedState(undefined, 12);
+    const uid = getOrCreateIosUserId();
+    const state = await fetchNewsfeedState(undefined, 12, uid);
     if (state) {
       setNewsfeedItems(state.items || []);
       if (state.summary_text) setNewsfeedSummary(state.summary_text);
@@ -530,17 +575,22 @@ export default function IosPwaPage() {
 
       <header className="sticky top-0 z-30 ios-glass ios-safe-top border-b border-black/10">
         <div className="px-4 py-2.5 flex items-center justify-between">
-          <div>
-            <p className="text-[11px] font-semibold uppercase tracking-wider text-emerald-600">
-              V-ARGON iOS
-            </p>
-            <h1 className="text-[20px] font-bold tracking-tight leading-tight">
-              {activeTab === 'home' && 'Tổng quan trang trại'}
-              {activeTab === 'camera' && 'Camera AI Giám sát'}
-              {activeTab === 'attendance' && 'Quét mặt & Bảo hộ'}
-              {activeTab === 'manage' && 'Quản lý chung'}
-              {activeTab === 'chat' && 'Trợ lý V-ARGON AI'}
-            </h1>
+          <div className="flex items-center gap-2.5">
+            <div className="w-8 h-8 rounded-xl bg-[#15803D] flex items-center justify-center shrink-0 shadow-sm">
+              <VArgonLogo className="w-4 h-4" variant="white" />
+            </div>
+            <div>
+              <p className="text-[11px] font-semibold uppercase tracking-wider text-emerald-700">
+                V-ARGON iOS
+              </p>
+              <h1 className="text-[20px] font-bold tracking-tight leading-tight">
+                {activeTab === 'home' && 'Tổng quan trang trại'}
+                {activeTab === 'camera' && 'Camera AI Giám sát'}
+                {activeTab === 'attendance' && 'Quét mặt & Bảo hộ'}
+                {activeTab === 'manage' && 'Quản lý chung'}
+                {activeTab === 'chat' && 'Trợ lý V-ARGON AI'}
+              </h1>
+            </div>
           </div>
           <div className="flex items-center gap-2">
             <span

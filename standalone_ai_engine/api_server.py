@@ -9,16 +9,19 @@ và Trang phục vào bất kỳ hệ thống nào (Node.js, C#, PHP, Java, Pyth
 Khởi chạy:
   uvicorn api_server:app --host 0.0.0.0 --port 8001
 """
+import os
 import time
 import asyncio
 import base64
 import cv2
 import numpy as np
-from fastapi import FastAPI, HTTPException, UploadFile, File, Form, Query, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, HTTPException, Request, UploadFile, File, Form, Query, WebSocket, WebSocketDisconnect
 from fastapi.responses import HTMLResponse, StreamingResponse, Response
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from typing import Optional, List, Union
+
+MAX_IMAGE_BYTES = 10 * 1024 * 1024  # 10 MB limit for image uploads/base64
 
 try:
     from standalone_runner import StandaloneVisionPipeline
@@ -35,13 +38,28 @@ app = FastAPI(
     description="Microservice Nhận diện Khuôn mặt, Chống Giả mạo & Kiểm tra Trang phục"
 )
 
+_raw_origins = os.getenv(
+    "CORS_ORIGINS",
+    "http://localhost:3000,http://localhost:3001,http://127.0.0.1:3000,http://127.0.0.1:3001,https://dat-latitude-5590-2.tail2bda46.ts.net,https://dat-latitude-5590-2.tail2bda46.ts.net:8443"
+)
+_cors_origins = [o.strip() for o in _raw_origins.split(",") if o.strip()]
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
+    allow_origins=_cors_origins,
+    allow_credentials="*" not in _cors_origins,
+    allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
     allow_headers=["*"],
 )
+
+
+@app.middleware("http")
+async def add_security_headers(request: Request, call_next):
+    response = await call_next(request)
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    response.headers["X-Frame-Options"] = "DENY"
+    response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+    return response
 
 pipeline = StandaloneVisionPipeline()
 camera_service = CameraStreamService(pipeline)
@@ -169,7 +187,10 @@ async def get_camera_snapshot(overlay: bool = Query(True, description="Kèm khun
 @app.post("/api/v1/camera/start")
 async def start_camera_stream(req: CameraStartRequest):
     """Khởi động luồng camera với nguồn chỉ định (Webcam 0, 1 hoặc link RTSP)."""
-    ok = camera_service.start(source=req.source, weekday_override=req.weekday_override)
+    try:
+        ok = camera_service.start(source=req.source, weekday_override=req.weekday_override)
+    except ValueError as ve:
+        raise HTTPException(400, str(ve))
     if not ok:
         raise HTTPException(400, f"Không thể mở nguồn camera: {camera_service.error_message}")
 
@@ -194,7 +215,14 @@ async def stop_camera_stream():
 def decode_image_base64(b64_str: str) -> np.ndarray:
     if "," in b64_str:
         b64_str = b64_str.split(",", 1)[1]
-    img_bytes = base64.b64decode(b64_str)
+    if len(b64_str) > int(MAX_IMAGE_BYTES * 1.4):
+        raise HTTPException(413, "Kích thước ảnh vượt quá giới hạn 10MB.")
+    try:
+        img_bytes = base64.b64decode(b64_str)
+    except Exception:
+        raise HTTPException(400, "Dữ liệu Base64 không hợp lệ.")
+    if len(img_bytes) > MAX_IMAGE_BYTES:
+        raise HTTPException(413, "Kích thước ảnh vượt quá giới hạn 10MB.")
     arr = np.frombuffer(img_bytes, dtype=np.uint8)
     img = cv2.imdecode(arr, cv2.IMREAD_COLOR)
     if img is None:

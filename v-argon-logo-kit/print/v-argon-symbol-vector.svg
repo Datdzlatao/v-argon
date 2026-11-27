@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" width="256" height="256" role="img" aria-labelledby="title desc">
+  <title id="title">V-ARGON Symbol</title>
+  <desc id="desc">V-Sprout emblem: twin sprouting leaves forming V around a rising seed core.</desc>
+  <g id="symbol">
+    <path fill="#15803D" d="M 26.00 56.00 C 58.00 44.00 84.00 66.00 94.00 108.00 C 102.00 142.00 116.00 170.00 128.00 170.00 C 140.00 170.00 154.00 142.00 162.00 108.00 C 172.00 66.00 198.00 44.00 230.00 56.00 L 145.00 203.22 C 139.00 213.61 134.00 222.00 128.00 222.00 C 122.00 222.00 117.00 213.61 111.00 203.22 Z"/>
+    <path fill="#22C55E" d="M 128.00 30.00 C 143.00 55.00 151.00 80.00 151.00 99.00 A 23.00 23.00 0 1 1 105.00 99.00 C 105.00 80.00 113.00 55.00 128.00 30.00 Z"/>
+  </g>
+</svg>

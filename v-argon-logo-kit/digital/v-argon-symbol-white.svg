@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" width="256" height="256" role="img" aria-labelledby="title desc">
+  <title id="title">V-ARGON Symbol (White Reversed)</title>
+  <desc id="desc">Irradiation-thinned white reversed V-Sprout symbol.</desc>
+  <g id="symbol">
+    <path fill="#FFFFFF" d="M 28.00 56.80 C 58.00 46.20 83.20 67.20 92.80 108.40 C 100.80 142.80 115.60 172.00 128.00 172.00 C 140.40 172.00 155.20 142.80 163.20 108.40 C 172.80 67.20 198.00 46.20 228.00 56.80 L 144.00 202.28 C 138.60 211.63 133.60 220.00 128.00 220.00 C 122.40 220.00 117.40 211.63 112.00 202.28 Z"/>
+    <path fill="#FFFFFF" d="M 128.00 32.00 C 141.80 56.00 149.40 80.20 149.40 98.80 A 21.40 21.40 0 1 1 106.60 98.80 C 106.60 80.20 114.20 56.00 128.00 32.00 Z"/>
+  </g>
+</svg>

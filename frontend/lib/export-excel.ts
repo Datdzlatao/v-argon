@@ -8,12 +8,23 @@ export function exportTableToExcel(
   headers: string[],
   rows: Array<Array<string | number>>
 ): void {
-  const escapeHtml = (val: string | number) =>
-    String(val ?? '')
+  const sanitizeFormulaAndHtml = (val: string | number) => {
+    let str = String(val ?? '');
+    // Neutralize Excel/CSV formula injection (=, +, -, @, tab, CR) for non-numeric strings
+    if (
+      typeof val !== 'number' &&
+      /^[=+\-@\t\r]/.test(str) &&
+      !/^-\d+(\.\d+)?$/.test(str.trim())
+    ) {
+      str = `'${str}`;
+    }
+    return str
       .replace(/&/g, '&amp;')
       .replace(/</g, '&lt;')
       .replace(/>/g, '&gt;')
       .replace(/"/g, '&quot;');
+  };
+  const escapeHtml = sanitizeFormulaAndHtml;
 
   const headerHtml = headers
     .map(

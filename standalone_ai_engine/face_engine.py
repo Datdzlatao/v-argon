@@ -175,7 +175,7 @@ class FaceEngine:
         # Kiểm tra xem cache hiện tại có hợp lệ và khớp danh sách file không
         if not force_reload and os.path.isfile(self.cache_path):
             try:
-                data = np.load(self.cache_path, allow_pickle=True)
+                data = np.load(self.cache_path, allow_pickle=False)
                 cached_files = list(data["files"]) if "files" in data else None
                 if cached_files is not None and sorted(cached_files) == files:
                     self.known_ids = list(data["ids"])
@@ -230,26 +230,46 @@ class FaceEngine:
             except Exception as e:
                 print(f"[FACE ENGINE] Lỗi ghi cache: {e}")
 
+    @staticmethod
+    def _sanitize_token(value: str, fallback: str = "") -> str:
+        """Sanitize identifier/suffix tokens to prevent path traversal."""
+        cleaned = re.sub(r"[^a-zA-Z0-9_-]", "", str(value or "").strip().replace(" ", "_"))
+        return cleaned or fallback
+
+    def _safe_face_path(self, filename: str) -> str:
+        """Resolve output path and verify it stays strictly inside self.faces_dir."""
+        base_dir = os.path.realpath(self.faces_dir)
+        os.makedirs(base_dir, exist_ok=True)
+        target = os.path.realpath(os.path.join(base_dir, os.path.basename(filename)))
+        if not target.startswith(base_dir + os.sep):
+            raise ValueError("Invalid target path outside known_faces directory.")
+        return target
+
     def register_face(self, student_id: str, student_name: str, image_bgr: np.ndarray, save_disk: bool = True, suffix: str = "") -> bool:
         emb = self.extract_embedding_from_image(image_bgr)
         if emb is None:
             return False
 
+        safe_id = self._sanitize_token(student_id)
+        if not safe_id:
+            raise ValueError("Mã nhân sự không hợp lệ.")
+
         if save_disk:
-            safe_name = re.sub(r"[^a-zA-Z0-9_-]", "", student_name.replace(" ", "_"))
-            clean_suffix = suffix.strip().lstrip("_")
+            safe_name = self._sanitize_token(student_name)
+            clean_suffix = self._sanitize_token(suffix.strip().lstrip("_"))
             if clean_suffix:
-                out_fn = f"{student_id}_{safe_name}_{clean_suffix}.jpg" if safe_name else f"{student_id}_{clean_suffix}.jpg"
+                out_fn = f"{safe_id}_{safe_name}_{clean_suffix}.jpg" if safe_name else f"{safe_id}_{clean_suffix}.jpg"
             else:
-                out_fn = f"{student_id}_{safe_name}.jpg" if safe_name else f"{student_id}.jpg"
-            
-            cv2.imwrite(os.path.join(self.faces_dir, out_fn), image_bgr)
+                out_fn = f"{safe_id}_{safe_name}.jpg" if safe_name else f"{safe_id}.jpg"
+
+            out_path = self._safe_face_path(out_fn)
+            cv2.imwrite(out_path, image_bgr)
             try:
                 self.load_known_faces(force_reload=True)
             except Exception as e:
                 print(f"[FACE ENGINE] Lỗi nạp lại cache: {e}")
         else:
-            self.known_ids.append(student_id)
+            self.known_ids.append(safe_id)
             self.known_names.append(student_name)
             self.known_embeddings.append(emb)
 
@@ -270,6 +290,10 @@ class FaceEngine:
         - nghieng_trai: Nghiêng góc trái ~30 độ
         - nghieng_phai: Nghiêng góc phải ~30 độ
         """
+        safe_id = self._sanitize_token(student_id)
+        if not safe_id:
+            return {"success": False, "error": "Mã nhân sự không hợp lệ."}
+
         angles = {
             "thang": img_thang,
             "nghieng_trai": img_nghieng_trai,
@@ -289,10 +313,10 @@ class FaceEngine:
 
         # 2. Lưu các tệp ảnh với hậu tố tương ứng
         if save_disk:
-            safe_name = re.sub(r"[^a-zA-Z0-9_-]", "", student_name.replace(" ", "_"))
+            safe_name = self._sanitize_token(student_name)
             for ang_name, img in angles.items():
-                out_fn = f"{student_id}_{safe_name}_{ang_name}.jpg" if safe_name else f"{student_id}_{ang_name}.jpg"
-                out_path = os.path.join(self.faces_dir, out_fn)
+                out_fn = f"{safe_id}_{safe_name}_{ang_name}.jpg" if safe_name else f"{safe_id}_{ang_name}.jpg"
+                out_path = self._safe_face_path(out_fn)
                 cv2.imwrite(out_path, img)
 
             # 3. Reload toàn bộ để đồng bộ cache .npz

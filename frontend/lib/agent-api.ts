@@ -257,10 +257,15 @@ export interface NewsfeedState {
   items: NewsfeedItem[];
 }
 
-export async function fetchNewsfeedState(penId?: string, limit: number = 12): Promise<NewsfeedState | null> {
+export async function fetchNewsfeedState(
+  penId?: string,
+  limit: number = 12,
+  userId?: string | null
+): Promise<NewsfeedState | null> {
   try {
     const url = new URL(`${BACKEND_URL}/api/newsfeed`);
     if (penId && penId !== 'all') url.searchParams.append('pen_id', penId);
+    if (userId) url.searchParams.append('user_id', userId);
     url.searchParams.append('limit', String(limit));
     const res = await fetch(url.toString(), { cache: 'no-store' });
     if (!res.ok) return null;
@@ -279,8 +284,12 @@ export async function fetchNewsfeedState(penId?: string, limit: number = 12): Pr
   }
 }
 
-export async function fetchNewsfeed(penId?: string, limit: number = 10): Promise<NewsfeedItem[]> {
-  const state = await fetchNewsfeedState(penId, limit);
+export async function fetchNewsfeed(
+  penId?: string,
+  limit: number = 10,
+  userId?: string | null
+): Promise<NewsfeedItem[]> {
+  const state = await fetchNewsfeedState(penId, limit, userId);
   return state?.items || [];
 }
 

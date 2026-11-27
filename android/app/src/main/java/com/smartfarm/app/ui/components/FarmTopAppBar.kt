@@ -14,10 +14,12 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.smartfarm.app.R
 import com.smartfarm.app.ui.theme.*
 
 @Composable
@@ -65,8 +67,8 @@ fun FarmTopAppBar(
                         contentAlignment = Alignment.Center
                     ) {
                         Icon(
-                            imageVector = Icons.Default.Agriculture,
-                            contentDescription = "Biểu tượng nông trại",
+                            painter = painterResource(id = R.drawable.ic_v_argon_mark),
+                            contentDescription = "Logo V-ARGON",
                             tint = Color.White,
                             modifier = Modifier.size(22.dp)
                         )

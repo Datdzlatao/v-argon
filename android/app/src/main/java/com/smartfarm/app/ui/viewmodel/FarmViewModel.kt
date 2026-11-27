@@ -270,7 +270,8 @@ class FarmViewModel(
 
                     // 2. Cứ mỗi 6 giây (counter % 2 == 0), cập nhật Vật nuôi/Cây trồng, Kho & Phân khu + Polling Newsfeed
                     if (counter % 2 == 0) {
-                        repository.getNewsfeedState(null, 12)?.let { state ->
+                        val activeUid = _userSession.value?.userId
+                        repository.getNewsfeedState(null, 12, activeUid)?.let { state ->
                             _newsfeedItems.value = state.items
                             if (state.summaryText.isNotBlank()) {
                                 _dailyBriefing.value = DailyBriefing(
@@ -296,7 +297,7 @@ class FarmViewModel(
                         }
 
                         // Polling kho vật tư
-                        val updatedInventory = repository.getInventory()
+                        val updatedInventory = repository.getInventory(_userSession.value?.userId)
                         if (updatedInventory.isNotEmpty() || _inventory.value.isNotEmpty()) {
                             _inventory.value = updatedInventory
                         }
@@ -371,7 +372,7 @@ class FarmViewModel(
     fun loadNewsfeed(penId: String? = _currentPenId.value) {
         viewModelScope.launch {
             isNewsfeedLoading.value = true
-            val state = repository.getNewsfeedState(penId = penId, limit = 12)
+            val state = repository.getNewsfeedState(penId = penId, limit = 12, userId = _userSession.value?.userId)
             if (state != null) {
                 _newsfeedItems.value = state.items
                 if (state.summaryText.isNotBlank()) {
@@ -602,15 +603,16 @@ class FarmViewModel(
     // ==========================================
     fun loadInventory() {
         viewModelScope.launch {
-            _inventory.value = repository.getInventory()
+            _inventory.value = repository.getInventory(_userSession.value?.userId)
         }
     }
 
     fun importInventory(name: String, category: String, qty: Double, unit: String, price: Double) {
         viewModelScope.launch {
-            val ok = repository.importInventory(name, category, qty, unit, price)
+            val uid = _userSession.value?.userId
+            val ok = repository.importInventory(name, category, qty, unit, price, uid)
             if (ok) {
-                _inventory.value = repository.getInventory()
+                _inventory.value = repository.getInventory(uid)
                 showToast("Nhập kho thành công: $qty $unit $name")
             } else {
                 showToast("Nhập kho thất bại, vui lòng thử lại!")
@@ -622,7 +624,7 @@ class FarmViewModel(
         viewModelScope.launch {
             val ok = repository.exportInventory(itemId, currentQty, exportQty)
             if (ok) {
-                _inventory.value = repository.getInventory()
+                _inventory.value = repository.getInventory(_userSession.value?.userId)
                 showToast("Đã xuất kho $exportQty cho chuồng nuôi")
             } else {
                 showToast("Xuất kho thất bại!")
@@ -927,12 +929,13 @@ class FarmViewModel(
     }
 
     fun loginDemo() {
-        val demoSession = UserSession("demo@smartfarm.vn", "guest", isDemo = true)
+        val demoUid = sessionManager.getOrCreateDemoUserId()
+        val demoSession = UserSession("demo@smartfarm.vn", demoUid, isDemo = true)
         sessionManager.saveSession(demoSession)
         _userSession.value = demoSession
         repository.setAuthToken(null)
         loadInitialData()
-        showToast("Đã kích hoạt chế độ Trải Nghiệm Dùng Thử")
+        showToast("Đã kích hoạt chế độ Trải Nghiệm riêng biệt")
     }
 
     fun logout() {
@@ -942,6 +945,14 @@ class FarmViewModel(
         }
         sessionManager.clearSession()
         _userSession.value = null
+        _pens.value = emptyList()
+        _currentPenId.value = ""
+        _devices.value = emptyList()
+        _animals.value = emptyList()
+        _crops.value = emptyList()
+        _inventory.value = emptyList()
+        _newsfeedItems.value = emptyList()
+        _activeAlerts.value = emptyList()
         showToast("Đã đăng xuất tài khoản.")
     }
 

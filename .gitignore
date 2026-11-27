@@ -38,7 +38,7 @@ database.sql
 a.txt
 1.txt
 database.txt
-.agent
+.agent/
 smart_farm.db 
 start_apis.sh
 start.sh

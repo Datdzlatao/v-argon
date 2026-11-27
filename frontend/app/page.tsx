@@ -48,6 +48,30 @@ import {
   mergeOperationLogs,
 } from '../lib/operation-logs';
 
+const DEMO_USER_STORAGE_KEY = 'vargon_demo_user_id';
+
+function getOrCreateDemoUserId(): string {
+  if (typeof window === 'undefined') return '00000000-0000-4000-8000-000000000000';
+  try {
+    const existing = window.localStorage.getItem(DEMO_USER_STORAGE_KEY);
+    if (existing && /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/.test(existing)) {
+      return existing;
+    }
+    const generated =
+      typeof window.crypto?.randomUUID === 'function'
+        ? window.crypto.randomUUID()
+        : 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => {
+            const r = (Math.random() * 16) | 0;
+            const v = c === 'x' ? r : (r & 0x3) | 0x8;
+            return v.toString(16);
+          });
+    window.localStorage.setItem(DEMO_USER_STORAGE_KEY, generated);
+    return generated;
+  } catch {
+    return '00000000-0000-4000-8000-000000000000';
+  }
+}
+
 export default function Home() {
   // --- AUTH STATE ---
   const [session, setSession] = useState<any>(null);
@@ -56,6 +80,8 @@ export default function Home() {
   const [password, setPassword] = useState('');
   const [authError, setAuthError] = useState('');
   const [isDemoMode, setIsDemoMode] = useState(false);
+  const [demoUserId, setDemoUserId] = useState<string>('');
+  const activeUserId: string | null = session?.user?.id || (isDemoMode ? demoUserId || getOrCreateDemoUserId() : null);
 
   // --- APP STATE ---
   const [dashboardTab, setDashboardTab] = useState<'home' | 'operations' | 'general'>('home');
@@ -94,8 +120,13 @@ export default function Home() {
   const [isNewsfeedLoading, setIsNewsfeedLoading] = useState(false);
 
   const loadNewsfeed = async (penId?: string) => {
+    const uid = activeUserIdRef.current;
+    if (!uid) {
+      setNewsfeedItems([]);
+      return;
+    }
     setIsNewsfeedLoading(true);
-    const state = await fetchNewsfeedState(penId, 12);
+    const state = await fetchNewsfeedState(penId, 12, uid);
     if (state) {
       setNewsfeedItems(state.items || []);
       if (state.summary_text) {
@@ -216,11 +247,17 @@ export default function Home() {
   const currentModeRef = useRef(currentMode);
   const selectedAnimalIdRef = useRef(selectedAnimalId);
   const selectedCropIdRef = useRef(selectedCropId);
+  const activeUserIdRef = useRef<string | null>(activeUserId);
+  const userPenIdsRef = useRef<Set<string>>(new Set());
 
   useEffect(() => { currentPenIdRef.current = currentPenId; }, [currentPenId]);
   useEffect(() => { currentModeRef.current = currentMode; }, [currentMode]);
   useEffect(() => { selectedAnimalIdRef.current = selectedAnimalId; }, [selectedAnimalId]);
   useEffect(() => { selectedCropIdRef.current = selectedCropId; }, [selectedCropId]);
+  useEffect(() => { activeUserIdRef.current = activeUserId; }, [activeUserId]);
+  useEffect(() => {
+    userPenIdsRef.current = new Set(pens.map((p) => String(p.id).trim().toLowerCase()));
+  }, [pens]);
 
   const showRealtimeNotification = (table: string, actionDesc: string) => {
     setRealtimeToast({ table, message: actionDesc });
@@ -235,31 +272,36 @@ export default function Home() {
 
     supabase.auth.getSession().then(({ data: { session } }) => {
       setSession(session);
-      if (session) loadInitialData(session);
+      if (session) {
+        activeUserIdRef.current = session.user.id;
+        loadInitialData(session, session.user.id);
+      }
     });
-    loadNewsfeed();
 
     const onVisibility = () => {
-      if (document.visibilityState === 'visible') {
+      if (document.visibilityState === 'visible' && activeUserIdRef.current) {
         loadNewsfeed();
       }
     };
     document.addEventListener('visibilitychange', onVisibility);
     const pollTimer = setInterval(() => {
-      loadNewsfeed();
+      if (activeUserIdRef.current) loadNewsfeed();
     }, 10000);
+
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, nextSession) => {
+      setSession(nextSession);
+      if (nextSession) {
+        setIsDemoMode(false);
+        activeUserIdRef.current = nextSession.user.id;
+        loadInitialData(nextSession, nextSession.user.id);
+      }
+    });
 
     return () => {
       document.removeEventListener('visibilitychange', onVisibility);
       clearInterval(pollTimer);
+      subscription.unsubscribe();
     };
-
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
-      setSession(session);
-      if (session) loadInitialData(session);
-    });
-
-    return () => subscription.unsubscribe();
   }, []);
 
   // 2. Connect to Agent WebSocket for Live Events
@@ -284,18 +326,18 @@ export default function Home() {
             setBriefingText(data.content);
           }
         } else if (event === 'alert') {
+          const alertPen = String(data?.pen_id || '').trim().toLowerCase();
+          if (alertPen && !userPenIdsRef.current.has(alertPen)) return;
           setActiveAlerts((prev) => ({
             ...prev,
             [data.pen_id || 'unknown']: [data.message],
           }));
           loadNewsfeed();
         } else if (event === 'newsfeed_update') {
-          if (data && Array.isArray(data.items)) {
-            setNewsfeedItems(data.items);
-          } else {
-            loadNewsfeed();
-          }
+          loadNewsfeed();
         } else if (event === 'staff_checkin') {
+          const staffPen = String(data?.pen_id || '').trim().toLowerCase();
+          if (staffPen && !userPenIdsRef.current.has(staffPen)) return;
           const actionText = data.check_type === 'check_out' ? 'tan ca' : 'vào ca';
           showRealtimeNotification('staff', `👤 Nhân sự ${data.staff_name || data.staff_id} đã ${actionText} (${data.pen_id || 'Trang trại'})`);
         }
@@ -333,28 +375,38 @@ export default function Home() {
     return () => clearInterval(interval);
   }, [activeAlerts, isMuted]);
 
-  // 3. Load Initial Farm Data
-  const loadInitialData = async (activeSession = session) => {
-    await fetchPens(activeSession);
-    await fetchInventory();
-    await fetchInventoryLogs();
+  // 3. Load Initial Farm Data (strictly isolated by activeUserId)
+  const loadInitialData = async (activeSession = session, explicitUserId?: string | null) => {
+    const uid = explicitUserId || activeSession?.user?.id || activeUserIdRef.current;
+    if (!uid) return;
+    activeUserIdRef.current = uid;
+    await fetchPens(activeSession, uid);
+    await fetchInventory(uid);
+    await fetchInventoryLogs(uid);
+    await loadNewsfeed();
   };
 
-  // 4. Fetch Pens based on Mode & User Isolation
-  const fetchPens = async (activeSession = session) => {
-    let query = supabase.from('pens').select('*').eq('type', currentModeRef.current);
-
-    // Tách biệt mỗi user một khu vực chuồng riêng
-    const userId = activeSession?.user?.id;
-    if (userId) {
-      query = query.eq('user_id', userId);
+  // 4. Fetch Pens based on Mode & Strict User Isolation (both Logged-in and Demo Mode)
+  const fetchPens = async (activeSession = session, explicitUserId?: string | null) => {
+    const userId = explicitUserId || activeSession?.user?.id || activeUserIdRef.current;
+    if (!userId) {
+      setPens([]);
+      setCurrentPenId('');
+      currentPenIdRef.current = '';
+      userPenIdsRef.current = new Set();
+      return;
     }
 
-    const { data, error } = await query;
+    const { data } = await supabase
+      .from('pens')
+      .select('*')
+      .eq('type', currentModeRef.current)
+      .eq('user_id', userId)
+      .order('id');
 
     if (data && data.length > 0) {
       setPens((prev) => (JSON.stringify(prev) === JSON.stringify(data) ? prev : data));
-      // Giữ nguyên chuồng người dùng đang chọn nếu vẫn tồn tại, tránh bị nhảy về chuồng đầu tiên khi refetch
+      userPenIdsRef.current = new Set(data.map((p: any) => String(p.id).trim().toLowerCase()));
       const currentSelected = currentPenIdRef.current;
       const exists = data.some(
         (p: any) => String(p.id).trim().toLowerCase() === String(currentSelected).trim().toLowerCase()
@@ -365,10 +417,18 @@ export default function Home() {
         currentPenIdRef.current = activeId;
       }
       await loadPenData(activeId);
-    } else if (userId) {
-      // User đã đăng nhập nhưng chưa có chuồng -> Tự động khởi tạo chuồng mặc định riêng cho user
-      const defaultPenId = `PEN-${userId.substring(0, 4).toUpperCase()}-01`;
-      const defaultPenName = currentModeRef.current === 'livestock' ? 'Chuồng Nuôi Cá Nhân Khu 1' : 'Vườn Trồng Cá Nhân Khu 1';
+    } else {
+      // Khởi tạo chuồng/vườn mặc định riêng biệt gắn với user_id (áp dụng cho cả tài khoản mới & chế độ trải nghiệm)
+      const modeTag = currentModeRef.current === 'livestock' ? 'L' : 'C';
+      const defaultPenId = `PEN-${userId.substring(0, 6).toUpperCase()}-${modeTag}1`;
+      const defaultPenName =
+        currentModeRef.current === 'livestock'
+          ? isDemoMode
+            ? 'Chuồng Trải Nghiệm Khu 1'
+            : 'Chuồng Nuôi Cá Nhân Khu 1'
+          : isDemoMode
+            ? 'Vườn Trải Nghiệm Khu 1'
+            : 'Vườn Trồng Cá Nhân Khu 1';
       const starterPen = {
         id: defaultPenId,
         name: defaultPenName,
@@ -377,25 +437,10 @@ export default function Home() {
       };
       await supabase.from('pens').insert([starterPen]);
       setPens([starterPen]);
+      userPenIdsRef.current = new Set([starterPen.id.trim().toLowerCase()]);
       setCurrentPenId(starterPen.id);
       currentPenIdRef.current = starterPen.id;
       await loadPenData(starterPen.id);
-    } else {
-      // Fallback Seed Pens if DB is empty or in Demo Mode
-      const fallbackPens = currentModeRef.current === 'livestock' 
-        ? [{ id: '123', name: 'Chuồng Heo Thịt Khu A1', type: 'livestock' }, { id: 'PEN-ISO-01', name: 'Khu Cách Ly Y Tế', type: 'livestock' }]
-        : [{ id: 'PEN-B01', name: 'Khu Nhà Màng Dưa Lưới B1', type: 'cultivation' }];
-      setPens((prev) => (JSON.stringify(prev) === JSON.stringify(fallbackPens) ? prev : fallbackPens));
-      const currentSelected = currentPenIdRef.current;
-      const exists = fallbackPens.some(
-        (p: any) => String(p.id).trim().toLowerCase() === String(currentSelected).trim().toLowerCase()
-      );
-      const activeId = exists ? currentSelected : fallbackPens[0].id;
-      if (currentPenIdRef.current !== activeId) {
-        setCurrentPenId(activeId);
-        currentPenIdRef.current = activeId;
-      }
-      await loadPenData(activeId);
     }
   };
 
@@ -478,27 +523,42 @@ export default function Home() {
     });
   };
 
-  // 5. Fetch Inventory - Chỉ cập nhật khi kho có thay đổi thực tế
-  const fetchInventory = async () => {
-    const { data } = await supabase.from('inventory').select('*').order('category');
+  // 5. Fetch Inventory - Chỉ tải kho gắn với user_id hiện tại
+  const fetchInventory = async (explicitUserId?: string | null) => {
+    const uid = explicitUserId || activeUserIdRef.current;
+    if (!uid) {
+      setInventory([]);
+      return;
+    }
+    const { data } = await supabase
+      .from('inventory')
+      .select('*')
+      .eq('user_id', uid)
+      .order('category');
     if (data) {
       setInventory((prev) => (JSON.stringify(prev) === JSON.stringify(data) ? prev : data));
     }
   };
 
-  // 5b. Fetch Inventory & Operation Logs (Nhập kho, Xuất kho, Xuất chuồng, Thu hoạch)
-  const fetchInventoryLogs = async () => {
-    const localLogs = loadLocalOperationLogs();
+  // 5b. Fetch Inventory & Operation Logs - Tách biệt theo user_id
+  const fetchInventoryLogs = async (explicitUserId?: string | null) => {
+    const uid = explicitUserId || activeUserIdRef.current;
+    if (!uid) {
+      setInventoryLogs([]);
+      return;
+    }
+    const localLogs = loadLocalOperationLogs(uid);
     try {
       const { data, error } = await supabase
         .from('inventory_logs')
         .select('*')
+        .eq('user_id', uid)
         .order('created_at', { ascending: false })
         .limit(200);
       if (!error && data) {
         const merged = mergeOperationLogs(data as OperationLog[], localLogs);
         setInventoryLogs((prev) => (JSON.stringify(prev) === JSON.stringify(merged) ? prev : merged));
-        saveLocalOperationLogs(merged);
+        saveLocalOperationLogs(merged, uid);
         return;
       }
     } catch (err) {
@@ -517,6 +577,7 @@ export default function Home() {
     penId: string | null,
     note: string
   ) => {
+    const uid = activeUserIdRef.current;
     const nowIso = new Date().toISOString();
     const localEntry: OperationLog = {
       id: `local_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
@@ -530,14 +591,14 @@ export default function Home() {
 
     setInventoryLogs((prev) => {
       const next = mergeOperationLogs([localEntry], prev);
-      saveLocalOperationLogs(next);
+      saveLocalOperationLogs(next, uid);
       return next;
     });
 
     try {
       const { error } = await supabase.from('inventory_logs').insert([
         {
-          user_id: session?.user?.id || null,
+          user_id: uid || null,
           item_name: itemName,
           action_type: actionType,
           amount: Number(amount) || 0,
@@ -547,7 +608,7 @@ export default function Home() {
         },
       ]);
       if (!error) {
-        await fetchInventoryLogs();
+        await fetchInventoryLogs(uid);
       }
     } catch (err) {
       console.warn('Could not persist operation log to Supabase:', err);
@@ -655,24 +716,29 @@ export default function Home() {
           }
         }
       )
-      // D. inventory: Kho thức ăn và vật tư
+      // D. inventory: Kho thức ăn và vật tư (chỉ nhận đúng user_id hiện tại)
       .on(
         'postgres_changes',
         { event: '*', schema: 'public', table: 'inventory' },
         async (payload: any) => {
           const { eventType, new: newItem, old: oldItem } = payload;
+          const uid = activeUserIdRef.current;
+          const rowUid = newItem?.user_id ?? oldItem?.user_id;
+          if (!uid || (rowUid && rowUid !== uid)) return;
           if (eventType === 'INSERT') {
+            if (!newItem?.user_id || newItem.user_id !== uid) return;
             setInventory((prev) => [...prev.filter((i) => !isSameId(i.id, newItem.id)), newItem]);
             showRealtimeNotification('inventory', `Kho nhập mặt hàng mới: ${newItem.name}`);
-            await fetchInventory();
+            await fetchInventory(uid);
           } else if (eventType === 'UPDATE') {
+            if (!newItem?.user_id || newItem.user_id !== uid) return;
             setInventory((prev) => prev.map((i) => (isSameId(i.id, newItem.id) ? newItem : i)));
             showRealtimeNotification('inventory', `Tồn kho ${newItem.name}: ${newItem.quantity} ${newItem.unit}`);
-            await fetchInventory();
+            await fetchInventory(uid);
           } else if (eventType === 'DELETE') {
             setInventory((prev) => prev.filter((i) => !isSameId(i.id, oldItem.id)));
             showRealtimeNotification('inventory', `Đã xóa mặt hàng kho`);
-            await fetchInventory();
+            await fetchInventory(uid);
           }
         }
       )
@@ -680,8 +746,11 @@ export default function Home() {
       .on(
         'postgres_changes',
         { event: 'INSERT', schema: 'public', table: 'inventory_logs' },
-        async () => {
-          await fetchInventoryLogs();
+        async (payload: any) => {
+          const uid = activeUserIdRef.current;
+          const rowUid = payload.new?.user_id;
+          if (!uid || (rowUid && rowUid !== uid)) return;
+          await fetchInventoryLogs(uid);
         }
       )
       // E. crops: Cây trồng và mùa vụ
@@ -708,37 +777,41 @@ export default function Home() {
           }
         }
       )
-      // F. pens: Danh sách chuồng trại
+      // F. pens: Danh sách chuồng trại (chỉ nhận chuồng thuộc user_id hiện tại)
       .on(
         'postgres_changes',
         { event: '*', schema: 'public', table: 'pens' },
         async (payload: any) => {
           const { eventType, new: newPen, old: oldPen } = payload;
+          const uid = activeUserIdRef.current;
+          if (!uid) return;
           if (eventType === 'INSERT') {
-            if (newPen.type === currentModeRef.current) {
+            if (newPen?.user_id === uid && newPen.type === currentModeRef.current) {
               setPens((prev) => [...prev.filter((p) => !isSameId(p.id, newPen.id)), newPen]);
               showRealtimeNotification('pens', `Khu vực mới vừa tạo: ${newPen.name}`);
             }
           } else if (eventType === 'UPDATE') {
+            if (newPen?.user_id !== uid) return;
             setPens((prev) => prev.map((p) => (isSameId(p.id, newPen.id) ? newPen : p)));
           } else if (eventType === 'DELETE') {
             setPens((prev) => prev.filter((p) => !isSameId(p.id, oldPen.id)));
           }
         }
       )
-      // G. alerts: Cảnh báo hệ thống
+      // G. alerts: Cảnh báo hệ thống (chỉ nhận cảnh báo thuộc chuồng của user hiện tại)
       .on(
         'postgres_changes',
         { event: 'INSERT', schema: 'public', table: 'alerts' },
         (payload: any) => {
           const newAlert = payload.new;
-          if (newAlert) {
-            setActiveAlerts((prev) => ({
-              ...prev,
-              [newAlert.pen_id || 'general']: [...(prev[newAlert.pen_id || 'general'] || []), newAlert.message],
-            }));
-            showRealtimeNotification('alerts', `⚠️ CẢNH BÁO MỚI: ${newAlert.message}`);
-          }
+          if (!newAlert) return;
+          const alertPen = String(newAlert.pen_id || '').trim().toLowerCase();
+          if (alertPen && !userPenIdsRef.current.has(alertPen)) return;
+          setActiveAlerts((prev) => ({
+            ...prev,
+            [newAlert.pen_id || 'general']: [...(prev[newAlert.pen_id || 'general'] || []), newAlert.message],
+          }));
+          showRealtimeNotification('alerts', `⚠️ CẢNH BÁO MỚI: ${newAlert.message}`);
         }
       )
       // H. health_logs & weight_logs
@@ -976,6 +1049,19 @@ export default function Home() {
     await supabase.auth.signOut();
     setSession(null);
     setIsDemoMode(false);
+    activeUserIdRef.current = null;
+    userPenIdsRef.current = new Set();
+    setPens([]);
+    setCurrentPenId('');
+    currentPenIdRef.current = '';
+    setDevices([]);
+    setAnimals([]);
+    setCrops([]);
+    setInventory([]);
+    setInventoryLogs([]);
+    setNewsfeedItems([]);
+    setActiveAlerts({});
+    setBriefingText('');
   };
 
   // --- RENDER LANDING INTRO + LOGIN IF NOT AUTHENTICATED & NOT DEMO ---
@@ -991,8 +1077,11 @@ export default function Home() {
         authError={authError}
         handleAuth={handleAuth}
         onDemo={() => {
+          const uid = getOrCreateDemoUserId();
+          setDemoUserId(uid);
           setIsDemoMode(true);
-          loadInitialData();
+          activeUserIdRef.current = uid;
+          loadInitialData(null, uid);
         }}
       />
     );
@@ -1081,7 +1170,7 @@ export default function Home() {
         <div className="max-w-[1440px] mx-auto w-full px-4 sm:px-6 py-6 flex-1 min-w-0">
           <FeedExtendedModules
             penName="Toàn Trang Trại"
-            userId={session?.user?.id || null}
+            userId={activeUserId}
           />
         </div>
       ) : (
@@ -1316,7 +1405,7 @@ export default function Home() {
         temp={envData.temp}
         hum={envData.hum}
         smell={envData.smell}
-        userId={session?.user?.id || (isDemoMode ? 'demo_user' : 'guest')}
+        userId={activeUserId || 'guest'}
       />
 
       {/* 4. Modals */}
@@ -1324,7 +1413,7 @@ export default function Home() {
         isOpen={modalOpen.addPen}
         onClose={() => setModalOpen({ ...modalOpen, addPen: false })}
         onAdd={async (type, id, name, cameraUrl, webcamUrl) => {
-          const userId = session?.user?.id;
+          const userId = activeUserIdRef.current;
           const newPen = {
             id,
             name,
@@ -1458,7 +1547,7 @@ export default function Home() {
               quantity: Number(quantity),
               unit: unit || 'kg',
               unit_price: Number(price) || 0,
-              user_id: session?.user?.id || null,
+              user_id: activeUserIdRef.current || null,
             };
             await supabase.from('inventory').insert([newItem]);
           }

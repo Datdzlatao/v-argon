@@ -24,7 +24,7 @@ from typing import Dict, List, Literal, Optional
 import cv2
 import numpy as np
 from dotenv import load_dotenv
-from fastapi import FastAPI, HTTPException, Query, status, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, HTTPException, Query, Request, status, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
@@ -56,14 +56,29 @@ app = FastAPI(
     version="2.0.0"
 )
 
-# Cho phép kết nối CORS
+# Cho phép kết nối CORS an toàn (có thể cấu hình qua biến môi trường CORS_ORIGINS)
+_raw_origins = os.getenv(
+    "CORS_ORIGINS",
+    "http://localhost:3000,http://localhost:3001,http://127.0.0.1:3000,http://127.0.0.1:3001,https://dat-latitude-5590-2.tail2bda46.ts.net,https://dat-latitude-5590-2.tail2bda46.ts.net:8443"
+)
+_cors_origins = [o.strip() for o in _raw_origins.split(",") if o.strip()]
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
+    allow_origins=_cors_origins,
+    allow_credentials="*" not in _cors_origins,
+    allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
     allow_headers=["*"],
 )
+
+
+@app.middleware("http")
+async def add_security_headers(request: Request, call_next):
+    response = await call_next(request)
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    response.headers["X-Frame-Options"] = "DENY"
+    response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+    return response
 
 # Mount thư mục static cho Web Dashboard
 STATIC_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "static")
@@ -586,7 +601,10 @@ def get_tracker_status(
 def configure_pen_camera(req: CameraConfigureRequest):
     """Thiết lập hoặc đổi địa chỉ IP Camera hoặc Webcam tùy chỉnh cho chuồng/vườn."""
     stream_type = (req.stream_type or "ipcam").strip().lower()
-    session = multi_camera_manager.get_or_create(target_id=req.target_id, source=req.source, stream_type=stream_type)
+    try:
+        session = multi_camera_manager.get_or_create(target_id=req.target_id, source=req.source, stream_type=stream_type)
+    except ValueError as ve:
+        raise HTTPException(status_code=400, detail=str(ve))
     stream_label = "IP Cam Điện Thoại" if stream_type == "ipcam" else "Webcam Máy Tính"
     return {
         "success": True,
@@ -691,9 +709,10 @@ def log_action_result(payload: ActionLogCreate):
             data=inserted
         )
     except Exception as e:
+        print(f"[ACTION LOG ERROR] {e}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Lỗi khi lưu log hành động: {e}"
+            detail="Lỗi hệ thống khi lưu log hành động."
         )
 
 

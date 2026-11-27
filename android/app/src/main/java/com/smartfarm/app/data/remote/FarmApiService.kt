@@ -37,7 +37,8 @@ interface FarmApiService {
     @GET("/api/newsfeed")
     suspend fun getNewsfeed(
         @Query("pen_id") penId: String? = null,
-        @Query("limit") limit: Int = 12
+        @Query("limit") limit: Int = 12,
+        @Query("user_id") userId: String? = null
     ): Response<JsonObject>
 
     @POST("/api/devices/control")

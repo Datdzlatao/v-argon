@@ -14,7 +14,11 @@ from app.db.repositories.schedules import SchedulesRepository
 logger = logging.getLogger("smart_manager.newsfeed")
 
 
-def build_live_newsfeed(pen_id: Optional[str] = None, limit: int = 12) -> list[dict[str, Any]]:
+def build_live_newsfeed(
+    pen_id: Optional[str] = None,
+    limit: int = 12,
+    user_id: Optional[str] = None,
+) -> list[dict[str, Any]]:
     """
     Build a unified, prioritized live News Feed from all farm observers:
     - Recent alerts (environment anomalies, smell, temp, health)
@@ -22,23 +26,38 @@ def build_live_newsfeed(pen_id: Optional[str] = None, limit: int = 12) -> list[d
     - Animals needing medical attention
     - Crops approaching harvest
     - Today's pending schedules
-    Each item includes `action_route`, `action_label`, and optional `quick_api` for 1-tap resolution.
+    Strictly scoped to pens & inventory owned by `user_id` when provided.
     """
     items: list[dict[str, Any]] = []
     now_iso = datetime.now(timezone.utc).isoformat()
     clean_pen = pen_id.strip() if pen_id and pen_id.strip() and pen_id != "all" else None
+    clean_uid = user_id.strip() if user_id and user_id.strip() else None
 
     pen_name_map: dict[str, str] = {}
+    allowed_pen_ids: Optional[set[str]] = None
     try:
-        for p in PensRepository().list_all():
+        user_pens = PensRepository().list_all(user_id=clean_uid)
+        if clean_uid is not None:
+            allowed_pen_ids = set()
+        for p in user_pens:
             pid = str(p.get("id") or "").strip()
             if pid:
                 pen_name_map[pid] = str(p.get("name") or pid).strip()
+                if allowed_pen_ids is not None:
+                    allowed_pen_ids.add(pid)
     except Exception:
-        pass
+        if clean_uid is not None:
+            allowed_pen_ids = set()
 
     def _zone_name(pid: str) -> str:
         return pen_name_map.get(pid, pid)
+
+    def _pen_allowed(pid: str) -> bool:
+        if clean_pen and pid != clean_pen:
+            return False
+        if allowed_pen_ids is not None and pid not in allowed_pen_ids:
+            return False
+        return True
 
     # 1. Recent Alerts
     try:
@@ -53,7 +72,7 @@ def build_live_newsfeed(pen_id: Optional[str] = None, limit: int = 12) -> list[d
         seen_alert_keys: set[tuple[str, str]] = set()
         for idx, a in enumerate(alerts):
             a_pen = str(a.get("pen_id") or "123")
-            if clean_pen and a_pen != clean_pen:
+            if not _pen_allowed(a_pen):
                 continue
             a_type = str(a.get("alert_type") or "ALERT").upper()
             dedup_key = (a_type, a_pen)
@@ -145,8 +164,9 @@ def build_live_newsfeed(pen_id: Optional[str] = None, limit: int = 12) -> list[d
 
     # 2. Low-stock inventory
     try:
-        low_stocks = InventoryRepository().get_low_stock()
-        stock_pen = clean_pen or "123"
+        low_stocks = InventoryRepository().get_low_stock(user_id=clean_uid)
+        default_user_pen = next(iter(allowed_pen_ids), "123") if allowed_pen_ids else "123"
+        stock_pen = clean_pen or default_user_pen
         for item in low_stocks:
             items.append({
                 "id": f"stock-{item.get('id', item.get('name'))}",
@@ -170,7 +190,7 @@ def build_live_newsfeed(pen_id: Optional[str] = None, limit: int = 12) -> list[d
         sick = AnimalsRepository().get_sick_or_attention_animals()
         for a in sick:
             a_pen = str(a.get("pen_id") or "123")
-            if clean_pen and a_pen != clean_pen:
+            if not _pen_allowed(a_pen):
                 continue
             items.append({
                 "id": f"animal-{a.get('id')}",
@@ -194,7 +214,7 @@ def build_live_newsfeed(pen_id: Optional[str] = None, limit: int = 12) -> list[d
         harvests = CropsRepository().get_upcoming_harvests(within_days=5)
         for c in harvests:
             c_pen = str(c.get("pen_id") or "Vườn01")
-            if clean_pen and c_pen != clean_pen:
+            if not _pen_allowed(c_pen):
                 continue
             items.append({
                 "id": f"crop-{c.get('id')}",
@@ -219,7 +239,7 @@ def build_live_newsfeed(pen_id: Optional[str] = None, limit: int = 12) -> list[d
         tasks = SchedulesRepository().get_pending_schedules(target_date=today_str)
         for t in tasks[:3]:
             t_pen = str(t.get("pen_id") or "123")
-            if clean_pen and t_pen != clean_pen:
+            if not _pen_allowed(t_pen):
                 continue
             note_part = f" — {t.get('note')}" if t.get("note") else ""
             items.append({
@@ -269,29 +289,52 @@ def build_text_summary(
     return "\n".join(parts)
 
 
-def sync_newsfeed_to_store(briefing_text: Optional[str] = None, limit: int = 12) -> dict[str, Any]:
+def sync_newsfeed_to_store(
+    briefing_text: Optional[str] = None,
+    limit: int = 12,
+    user_id: Optional[str] = None,
+) -> dict[str, Any]:
     """
     Compute the live farm newsfeed + text summary and persist it to `farm_newsfeed_state`
-    (Supabase table with SQLite fallback) so all polling UIs stay synchronized.
+    (Supabase table with SQLite fallback) scoped per user_id when provided.
     """
+    clean_uid = user_id.strip() if user_id and user_id.strip() else None
+    state_id = f"user:{clean_uid}" if clean_uid else "global"
     repo = NewsfeedRepository()
-    existing = repo.get_state("global") or {}
+    existing = repo.get_state(state_id) or {}
 
-    items = build_live_newsfeed(pen_id=None, limit=limit)
+    items = build_live_newsfeed(pen_id=None, limit=limit, user_id=clean_uid)
+
+    allowed_pen_ids: Optional[set[str]] = None
+    if clean_uid:
+        try:
+            allowed_pen_ids = {
+                str(p.get("id") or "").strip()
+                for p in PensRepository().list_all(user_id=clean_uid)
+                if p.get("id")
+            }
+        except Exception:
+            allowed_pen_ids = set()
 
     pending_tasks_count = 0
     low_stock_count = 0
     sick_animals_count = 0
     try:
-        pending_tasks_count = len(SchedulesRepository().get_pending_schedules(target_date=date.today().isoformat()))
+        tasks = SchedulesRepository().get_pending_schedules(target_date=date.today().isoformat())
+        if allowed_pen_ids is not None:
+            tasks = [t for t in tasks if str(t.get("pen_id") or "").strip() in allowed_pen_ids]
+        pending_tasks_count = len(tasks)
     except Exception:
         pass
     try:
-        low_stock_count = len(InventoryRepository().get_low_stock())
+        low_stock_count = len(InventoryRepository().get_low_stock(user_id=clean_uid))
     except Exception:
         pass
     try:
-        sick_animals_count = len(AnimalsRepository().get_sick_or_attention_animals())
+        sick = AnimalsRepository().get_sick_or_attention_animals()
+        if allowed_pen_ids is not None:
+            sick = [a for a in sick if str(a.get("pen_id") or "").strip() in allowed_pen_ids]
+        sick_animals_count = len(sick)
     except Exception:
         pass
 
@@ -310,5 +353,5 @@ def sync_newsfeed_to_store(briefing_text: Optional[str] = None, limit: int = 12)
             "low_stock_count": low_stock_count,
             "sick_animals_count": sick_animals_count,
         },
-        state_id="global",
+        state_id=state_id,
     )

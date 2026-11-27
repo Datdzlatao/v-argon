@@ -9,9 +9,17 @@ class Settings(BaseSettings):
     # Server settings
     APP_NAME: str = "Smart Management AI Agent System"
     APP_ENV: str = "development"
-    DEBUG: bool = True
+    DEBUG: bool = False
     HOST: str = "0.0.0.0"
     PORT: int = 8000
+    CORS_ORIGINS: str = (
+        "http://localhost:3000,http://localhost:3001,"
+        "http://127.0.0.1:3000,http://127.0.0.1:3001,"
+        "https://dat-latitude-5590-2.tail2bda46.ts.net,"
+        "https://dat-latitude-5590-2.tail2bda46.ts.net:8443"
+    )
+    API_AUTH_TOKEN: str = ""
+    MAX_UPLOAD_MB: int = 10
 
     # Supabase settings
     SUPABASE_URL: str = "https://sopqsxhuitqcmnvosjeq.supabase.co"

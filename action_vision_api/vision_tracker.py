@@ -13,9 +13,11 @@ Nguyên lý thiết kế (Andrej Karpathy Guidelines):
 """
 
 import argparse
+import ipaddress
 import json
 import math
 import os
+import socket
 import threading
 import time
 from typing import Dict, Optional, Tuple
@@ -238,18 +240,47 @@ def draw_hud(frame: np.ndarray, landmarks_dict: dict, fsm_state: str, metrics: d
 # ==============================================================================
 
 def normalize_camera_source(src) -> object:
-    """Chuẩn hóa nguồn camera: giữ nguyên index số (webcam), tự thêm http:// và /video cho IP Cam nếu thiếu."""
+    """Chuẩn hóa & kiểm tra an toàn nguồn camera (chặn SSRF loopback/metadata và đọc file nội bộ)."""
     raw = str(src).strip() if src is not None else "0"
     if not raw:
         return 0
     if raw.isdigit():
-        return int(raw)
-    if not raw.startswith(("http://", "https://", "rtsp://", "rtmp://", "/")):
+        idx = int(raw)
+        if 0 <= idx <= 16:
+            return idx
+        raise ValueError("Chỉ số webcam không hợp lệ (chỉ hỗ trợ 0-16).")
+    if raw.startswith("/"):
+        raise ValueError("Không cho phép truy cập đường dẫn tệp nội bộ làm nguồn camera.")
+    if not raw.startswith(("http://", "https://", "rtsp://", "rtmp://")):
         raw = f"http://{raw}"
-    if raw.startswith(("http://", "https://")):
-        parsed = urlparse(raw)
-        if parsed.path in ("", "/"):
-            raw = f"{parsed.scheme}://{parsed.netloc}/video"
+
+    parsed = urlparse(raw)
+    if parsed.scheme.lower() not in ("http", "https", "rtsp", "rtmp"):
+        raise ValueError("Chỉ hỗ trợ giao thức http, https, rtsp hoặc rtmp.")
+
+    hostname = (parsed.hostname or "").strip().lower()
+    if not hostname:
+        raise ValueError("Địa chỉ camera thiếu hostname.")
+    if hostname in ("localhost", "metadata.google.internal", "metadata"):
+        raise ValueError("Không cho phép kết nối camera tới địa chỉ nội bộ/metadata.")
+
+    try:
+        ip_obj = ipaddress.ip_address(hostname)
+        if ip_obj.is_loopback or ip_obj.is_link_local or ip_obj.is_unspecified:
+            raise ValueError("Không cho phép kết nối camera tới loopback hoặc link-local/metadata IP.")
+    except ValueError as exc:
+        if "Không cho phép" in str(exc):
+            raise
+        try:
+            for info in socket.getaddrinfo(hostname, None):
+                resolved_ip = ipaddress.ip_address(info[4][0])
+                if resolved_ip.is_loopback or resolved_ip.is_link_local or resolved_ip.is_unspecified:
+                    raise ValueError("Hostname camera phân giải tới địa chỉ bị chặn (loopback/metadata).")
+        except socket.gaierror:
+            pass
+
+    if raw.startswith(("http://", "https://")) and parsed.path in ("", "/"):
+        raw = f"{parsed.scheme}://{parsed.netloc}/video"
     return raw
 
 
@@ -312,7 +343,7 @@ class VideoStreamReader:
             return False
         got_any_frame = False
         try:
-            with requests.get(self.src, stream=True, timeout=(3, 5)) as resp:
+            with requests.get(self.src, stream=True, timeout=(3, 5), allow_redirects=False) as resp:
                 resp.raise_for_status()
                 buf = bytearray()
                 for chunk in resp.iter_content(chunk_size=16384):

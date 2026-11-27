@@ -1,5 +1,6 @@
 import asyncio
 import base64
+import hmac
 import json
 import logging
 import time
@@ -8,7 +9,7 @@ from contextlib import asynccontextmanager
 from datetime import date
 from typing import Any, Optional, Dict
 
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException, Query, File, UploadFile, Form
+from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect, HTTPException, Query, File, UploadFile, Form
 from pydantic import BaseModel
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse
@@ -100,14 +101,37 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
-# CORS Middleware
+# CORS Middleware (restricted origins, never '*' with allow_credentials=True)
+_cors_origins = [o.strip() for o in settings.CORS_ORIGINS.split(",") if o.strip()]
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
+    allow_origins=_cors_origins,
+    allow_credentials="*" not in _cors_origins,
+    allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
     allow_headers=["*"],
 )
+
+MAX_IMAGE_BYTES = settings.MAX_UPLOAD_MB * 1024 * 1024
+
+
+@app.middleware("http")
+async def security_and_auth_middleware(request: Request, call_next):
+    # Optional Bearer / X-API-Key enforcement when API_AUTH_TOKEN is configured
+    expected_token = settings.API_AUTH_TOKEN.strip()
+    if expected_token and request.url.path.startswith("/api/"):
+        auth_header = request.headers.get("Authorization", "")
+        bearer_token = auth_header[7:].strip() if auth_header.startswith("Bearer ") else ""
+        api_key_header = request.headers.get("X-API-Key", "").strip()
+        provided = bearer_token or api_key_header
+        if not provided or not hmac.compare_digest(provided, expected_token):
+            return JSONResponse(status_code=401, content={"detail": "Thiếu hoặc sai mã xác thực API."})
+
+    response = await call_next(request)
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    response.headers["X-Frame-Options"] = "DENY"
+    response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+    response.headers["Permissions-Policy"] = "camera=(), microphone=()"
+    return response
 
 # Repositories
 env_repo = EnvLogsRepository()
@@ -146,14 +170,20 @@ async def health_check():
 
 
 @app.get("/api/farm/overview", tags=["Farm"])
-async def farm_overview():
-    """Get high-level farm overview (pens, devices, animals, crops)."""
+async def farm_overview(user_id: Optional[str] = Query(None, description="Lọc tổng quan theo ID người dùng")):
+    """Get high-level farm overview (pens, devices, animals, crops), scoped to user_id when provided."""
     try:
-        pens = pens_repo.list_all()
+        pens = pens_repo.list_all(user_id=user_id)
+        allowed_pen_ids = {str(p.get("id") or "").strip() for p in pens}
         devs = devices_repo.list_all()
         animals = animals_repo.list_all()
         crops = crops_repo.list_all()
         sick = animals_repo.get_sick_or_attention_animals()
+        if user_id:
+            devs = [d for d in devs if str(d.get("pen_id") or "").strip() in allowed_pen_ids]
+            animals = [a for a in animals if str(a.get("pen_id") or "").strip() in allowed_pen_ids]
+            crops = [c for c in crops if str(c.get("pen_id") or "").strip() in allowed_pen_ids]
+            sick = [s for s in sick if str(s.get("pen_id") or "").strip() in allowed_pen_ids]
         return {
             "pens_count": len(pens),
             "devices_count": len(devs),
@@ -211,7 +241,7 @@ async def update_pen_metadata(pen_id: str, payload: PenUpdate):
 
 
 @app.get("/api/pens/{pen_id}/details", tags=["Pens"])
-async def get_pen_details(pen_id: str):
+async def get_pen_details(pen_id: str, user_id: Optional[str] = Query(None)):
     """
     Get all information for a specific pen:
     - Pen metadata
@@ -219,7 +249,7 @@ async def get_pen_details(pen_id: str):
     - Devices configured
     - Latest sensor telemetry
     """
-    pen = pens_repo.get_by_id(pen_id)
+    pen = pens_repo.get_by_id(pen_id, user_id=user_id)
     if not pen:
         raise HTTPException(status_code=404, detail=f"Không tìm thấy chuồng {pen_id}")
 
@@ -438,28 +468,32 @@ async def record_env_log(payload: EnvLogCreate):
 
 
 @app.get("/api/inventory", tags=["Inventory"])
-async def get_inventory():
-    """List all inventory items."""
+async def get_inventory(user_id: Optional[str] = Query(None)):
+    """List inventory items, scoped by user_id when provided."""
     try:
-        return inventory_repo.list_all()
+        return inventory_repo.list_all(user_id=user_id)
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
 
 @app.get("/api/inventory/low-stock", tags=["Inventory"])
-async def get_low_stock():
-    """Get inventory items at or below minimum threshold."""
+async def get_low_stock(user_id: Optional[str] = Query(None)):
+    """Get inventory items at or below minimum threshold, scoped by user_id."""
     try:
-        return inventory_repo.get_low_stock()
+        return inventory_repo.get_low_stock(user_id=user_id)
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
 
 @app.get("/api/inventory/logs", tags=["Inventory"])
-async def get_inventory_logs(limit: int = 100, action_type: Optional[str] = None):
-    """List warehouse import/export and barn export logs."""
+async def get_inventory_logs(
+    limit: int = 100,
+    action_type: Optional[str] = None,
+    user_id: Optional[str] = Query(None),
+):
+    """List warehouse import/export and barn export logs, scoped by user_id."""
     try:
-        return inventory_repo.list_logs(limit=limit, action_type=action_type)
+        return inventory_repo.list_logs(limit=limit, action_type=action_type, user_id=user_id)
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -486,19 +520,25 @@ async def get_alerts(limit: int = Query(default=20, ge=1, le=100)):
 async def get_live_newsfeed(
     pen_id: Optional[str] = Query(default=None, description="Lọc theo mã chuồng"),
     limit: int = Query(default=12, ge=1, le=30),
+    user_id: Optional[str] = Query(default=None, description="Lọc bản tin theo ID người dùng"),
 ):
     """
     Live Observer News Feed Endpoint:
     Reads the synchronized `farm_newsfeed_state` (summary_text, briefing_text, counts, items)
-    from Supabase/SQLite so all polling clients stay 100% in sync.
+    scoped per user_id when provided.
     """
     try:
         from app.db.repositories.newsfeed import NewsfeedRepository
         from app.background.newsfeed_service import sync_newsfeed_to_store
 
-        state = NewsfeedRepository().get_state("global")
-        if not state:
-            state = sync_newsfeed_to_store(limit=limit)
+        clean_uid = user_id.strip() if user_id and user_id.strip() else None
+        state_id = f"user:{clean_uid}" if clean_uid else "global"
+        if clean_uid:
+            state = sync_newsfeed_to_store(limit=limit, user_id=clean_uid)
+        else:
+            state = NewsfeedRepository().get_state(state_id)
+            if not state:
+                state = sync_newsfeed_to_store(limit=limit)
 
         items = state.get("items") or []
         if pen_id and pen_id != "all":
@@ -586,8 +626,13 @@ async def chat_with_agent(payload: AgentChatRequest):
             content=payload.message,
         )
 
-        # 3. Call AI Agent with context
-        result = await agent_service.chat(payload.message, history=history)
+        # 3. Call AI Agent with strict user_id + pen_id scope
+        result = await agent_service.chat(
+            payload.message,
+            history=history,
+            user_id=user_id,
+            pen_id=pen_id,
+        )
 
         # 4. Save agent reply & broadcast
         await _save_and_broadcast_chat(
@@ -628,7 +673,12 @@ async def chat_with_agent_stream(payload: AgentChatRequest):
         final_reply = ""
         final_tools = []
         try:
-            async for event in agent_service.chat_stream(payload.message, history=history):
+            async for event in agent_service.chat_stream(
+                payload.message,
+                history=history,
+                user_id=user_id,
+                pen_id=pen_id,
+            ):
                 if event.get("type") == "done":
                     final_reply = event.get("reply", "")
                     final_tools = event.get("tool_calls", [])
@@ -817,6 +867,8 @@ async def diagnose_disease_api(
         content_type = "image/jpeg"
         if image:
             image_bytes = await image.read()
+            if len(image_bytes) > MAX_IMAGE_BYTES:
+                raise HTTPException(status_code=413, detail=f"Ảnh tải lên vượt quá giới hạn {settings.MAX_UPLOAD_MB}MB.")
             content_type = image.content_type if image.content_type else "image/jpeg"
 
         result = await agent_service.diagnose_multimodal(
@@ -833,13 +885,15 @@ async def diagnose_disease_api(
             answer=result.get("answer", "Chưa có thông tin phác đồ điều trị."),
             sources=result.get("sources", []),
         )
+    except HTTPException:
+        raise
     except Exception as e:
-        logger.error(f"Diagnosis API error: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.exception(f"Diagnosis API error: {e}")
+        raise HTTPException(status_code=500, detail="Lỗi hệ thống khi chẩn đoán hình ảnh.")
 
 
 def _decode_base64_image(image_base64: Optional[str], default_mime: str = "image/jpeg") -> tuple[Optional[bytes], str]:
-    """Decode raw base64 or data URL into image bytes and MIME type."""
+    """Decode raw base64 or data URL into image bytes and MIME type with size limit."""
     if not image_base64 or not image_base64.strip():
         return None, default_mime
 
@@ -852,14 +906,20 @@ def _decode_base64_image(image_base64: Optional[str], default_mime: str = "image
             mime_type = extracted_mime
         raw = b64_payload
 
+    if len(raw) > int(MAX_IMAGE_BYTES * 1.4):
+        raise HTTPException(status_code=413, detail=f"Ảnh Base64 vượt quá giới hạn {settings.MAX_UPLOAD_MB}MB.")
+
     try:
-        return base64.b64decode(raw, validate=True), mime_type
+        decoded = base64.b64decode(raw, validate=True)
     except Exception:
-        # Fallback for non-strict padding/whitespace
         try:
-            return base64.b64decode(raw), mime_type
-        except Exception as exc:
-            raise HTTPException(status_code=400, detail=f"Ảnh Base64 không hợp lệ: {exc}")
+            decoded = base64.b64decode(raw)
+        except Exception:
+            raise HTTPException(status_code=400, detail="Ảnh Base64 không hợp lệ.")
+
+    if len(decoded) > MAX_IMAGE_BYTES:
+        raise HTTPException(status_code=413, detail=f"Ảnh Base64 vượt quá giới hạn {settings.MAX_UPLOAD_MB}MB.")
+    return decoded, mime_type
 
 
 @app.post("/api/diagnose/base64", response_model=DiagnosisResponse, tags=["RAG & Diagnosis"])
@@ -1406,6 +1466,12 @@ async def websocket_endpoint(websocket: WebSocket):
     try:
         while True:
             raw_data = await websocket.receive_text()
+            if len(raw_data) > 65536:
+                await ws_manager.send_personal_message(
+                    {"event": "error", "message": "Thông điệp WebSocket vượt quá giới hạn 64KB."},
+                    websocket,
+                )
+                continue
             try:
                 payload = json.loads(raw_data)
                 event_type = payload.get("action") or payload.get("event")
@@ -1426,8 +1492,13 @@ async def websocket_endpoint(websocket: WebSocket):
                             pen_id=ws_pen,
                         )
 
-                        # 3. Call AI agent
-                        result = await agent_service.chat(user_msg, history=history)
+                        # 3. Call AI agent with strict user_id + pen_id scope
+                        result = await agent_service.chat(
+                            user_msg,
+                            history=history,
+                            user_id=ws_user,
+                            pen_id=ws_pen,
+                        )
 
                         # 4. Save agent message
                         chat_history_repo.save_message(

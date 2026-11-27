@@ -312,6 +312,11 @@ ALTER TABLE public.env_logs ADD COLUMN IF NOT EXISTS pen_id TEXT;
 DO $$ 
 DECLARE 
     tbl text;
+    user_scoped_tables text[] := ARRAY[
+        'pens', 'inventory', 'inventory_logs', 'usage_logs', 'chat_messages',
+        'farm_finances', 'farm_office_records', 'office', 'farm_automation_rules',
+        'farm_hr_leaves', 'farm_hr_quotas', 'farm_video_qrs'
+    ];
 BEGIN
     FOR tbl IN 
         SELECT tablename FROM pg_tables 
@@ -325,7 +330,15 @@ BEGIN
     LOOP
         EXECUTE format('ALTER TABLE public.%I ENABLE ROW LEVEL SECURITY;', tbl);
         EXECUTE format('DROP POLICY IF EXISTS allow_all_backend_ops ON public.%I;', tbl);
-        EXECUTE format('CREATE POLICY allow_all_backend_ops ON public.%I FOR ALL USING (true) WITH CHECK (true);', tbl);
+        EXECUTE format('DROP POLICY IF EXISTS tenant_isolation_policy ON public.%I;', tbl);
+        IF tbl = ANY(user_scoped_tables) THEN
+            EXECUTE format(
+                'CREATE POLICY tenant_isolation_policy ON public.%I FOR ALL USING (user_id IS NULL OR user_id = auth.uid()) WITH CHECK (user_id IS NULL OR user_id = auth.uid());',
+                tbl
+            );
+        ELSE
+            EXECUTE format('CREATE POLICY allow_all_backend_ops ON public.%I FOR ALL USING (true) WITH CHECK (true);', tbl);
+        END IF;
     END LOOP;
 END $$;
 

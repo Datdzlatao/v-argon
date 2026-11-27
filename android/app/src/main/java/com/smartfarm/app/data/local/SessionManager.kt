@@ -15,6 +15,15 @@ class SessionManager(context: Context) {
         private const val KEY_ACCESS_TOKEN = "key_access_token"
         private const val KEY_REFRESH_TOKEN = "key_refresh_token"
         private const val KEY_IS_DEMO = "key_is_demo"
+        private const val KEY_DEMO_USER_ID = "key_demo_user_id"
+    }
+
+    fun getOrCreateDemoUserId(): String {
+        val existing = prefs.getString(KEY_DEMO_USER_ID, null)
+        if (!existing.isNullOrBlank()) return existing
+        val generated = java.util.UUID.randomUUID().toString()
+        prefs.edit().putString(KEY_DEMO_USER_ID, generated).apply()
+        return generated
     }
 
     fun saveSession(session: UserSession) {
@@ -49,6 +58,14 @@ class SessionManager(context: Context) {
     }
 
     fun clearSession() {
-        prefs.edit().clear().apply()
+        prefs.edit().apply {
+            remove(KEY_IS_LOGGED_IN)
+            remove(KEY_EMAIL)
+            remove(KEY_USER_ID)
+            remove(KEY_ACCESS_TOKEN)
+            remove(KEY_REFRESH_TOKEN)
+            remove(KEY_IS_DEMO)
+            apply()
+        }
     }
 }

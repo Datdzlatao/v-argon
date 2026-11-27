@@ -18,6 +18,10 @@ export interface OperationLog {
 
 const LOCAL_STORAGE_KEY = 'smart_farm_operation_logs_v1';
 
+function getStorageKey(userId?: string | null): string {
+  return userId ? `${LOCAL_STORAGE_KEY}_${userId}` : LOCAL_STORAGE_KEY;
+}
+
 export const ACTION_META: Record<
   string,
   { label: string; badgeClass: string; icon: string; unitHint: string }
@@ -72,10 +76,10 @@ export function formatLogTime(dateStr?: string): string {
   });
 }
 
-export function loadLocalOperationLogs(): OperationLog[] {
+export function loadLocalOperationLogs(userId?: string | null): OperationLog[] {
   if (typeof window === 'undefined') return [];
   try {
-    const raw = window.localStorage.getItem(LOCAL_STORAGE_KEY);
+    const raw = window.localStorage.getItem(getStorageKey(userId));
     if (!raw) return [];
     const parsed = JSON.parse(raw);
     return Array.isArray(parsed) ? parsed : [];
@@ -84,10 +88,10 @@ export function loadLocalOperationLogs(): OperationLog[] {
   }
 }
 
-export function saveLocalOperationLogs(logs: OperationLog[]): void {
+export function saveLocalOperationLogs(logs: OperationLog[], userId?: string | null): void {
   if (typeof window === 'undefined') return;
   try {
-    window.localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(logs.slice(0, 300)));
+    window.localStorage.setItem(getStorageKey(userId), JSON.stringify(logs.slice(0, 300)));
   } catch {
     // Ignore storage quota errors
   }

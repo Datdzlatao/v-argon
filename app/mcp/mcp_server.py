@@ -1,6 +1,7 @@
 import asyncio
 import json
 import logging
+from contextvars import ContextVar, Token
 from datetime import date
 from typing import Optional
 
@@ -54,22 +55,136 @@ def _notify_websocket_safe(event: str, data: dict):
 
 
 # ====================================================================
+# HARD-RULE USER ISOLATION CONTEXT (CHẶN TRUY CẬP CHÉO USER_ID)
+# ====================================================================
+
+_ACTIVE_USER_ID: ContextVar[Optional[str]] = ContextVar("active_user_id", default=None)
+
+
+def set_active_user_id(user_id: Optional[str]) -> Token:
+    """Bind active user_id to the current execution context for MCP tools/resources."""
+    clean = str(user_id).strip() if user_id else None
+    return _ACTIVE_USER_ID.set(clean)
+
+
+def reset_active_user_id(token: Token) -> None:
+    """Restore previous active user_id context."""
+    _ACTIVE_USER_ID.reset(token)
+
+
+def get_active_user_id() -> Optional[str]:
+    """Return active user_id in current execution context (None if unscoped)."""
+    return _ACTIVE_USER_ID.get()
+
+
+def _get_authorized_pens(user_id: Optional[str] = None) -> list[dict]:
+    """List only pens owned by active user_id (or all pens only when unscoped)."""
+    uid = get_active_user_id() if user_id is None else (str(user_id).strip() if user_id else None)
+    return pens_repo.list_all(user_id=uid) if uid else pens_repo.list_all()
+
+
+def _get_authorized_pen_ids(user_id: Optional[str] = None) -> Optional[set[str]]:
+    """Return set of allowed pen_ids for active user_id, or None if unscoped."""
+    uid = get_active_user_id() if user_id is None else (str(user_id).strip() if user_id else None)
+    if not uid:
+        return None
+    return {str(p.get("id")) for p in _get_authorized_pens(uid) if p.get("id")}
+
+
+def resolve_user_default_pen(user_id: Optional[str] = None, preferred_type: Optional[str] = None) -> Optional[str]:
+    """Return first authorized pen_id for user_id (optionally matching pen type), or None."""
+    pens = _get_authorized_pens(user_id)
+    if preferred_type:
+        for p in pens:
+            if p.get("type") == preferred_type and p.get("id"):
+                return str(p["id"])
+    for p in pens:
+        if p.get("id"):
+            return str(p["id"])
+    return None
+
+
+def _check_pen_access(
+    pen_id: str,
+    user_id: Optional[str] = None,
+    allow_create_if_missing: bool = False,
+) -> tuple[bool, str]:
+    """
+    Hard-rule enforcement: verify `pen_id` belongs to active `user_id`.
+    Returns (True, clean_pen_id) if allowed, or (False, error_message) if denied.
+    """
+    clean_pen = str(pen_id or "").strip()
+    uid = get_active_user_id() if user_id is None else (str(user_id).strip() if user_id else None)
+    if not uid:
+        return True, clean_pen
+
+    if not clean_pen:
+        return False, f"⛔ TỪ CHỐI TRUY CẬP: Thiếu mã chuồng thuộc tài khoản '{uid}'."
+
+    allowed_ids = _get_authorized_pen_ids(uid) or set()
+    if clean_pen in allowed_ids:
+        return True, clean_pen
+
+    # Check if pen exists globally under another user or unscoped seed
+    existing = pens_repo.get_by_id(clean_pen)
+    if existing:
+        if str(existing.get("user_id") or "") == uid:
+            return True, clean_pen
+        return (
+            False,
+            f"⛔ TỪ CHỐI TRUY CẬP (HARD RULE): Chuồng '{clean_pen}' không thuộc quyền sở hữu của tài khoản '{uid}'. "
+            f"Agent chỉ được phép đọc/thao tác trong khu vực của user_id='{uid}'.",
+        )
+
+    if allow_create_if_missing:
+        return True, clean_pen
+
+    return (
+        False,
+        f"⛔ TỪ CHỐI TRUY CẬP (HARD RULE): Chuồng '{clean_pen}' không tồn tại trong khu vực của tài khoản '{uid}'.",
+    )
+
+
+def _is_animal_in_user_scope(animal_id: str, user_id: Optional[str] = None) -> bool:
+    """Verify an animal belongs to one of the active user_id's pens."""
+    uid = get_active_user_id() if user_id is None else (str(user_id).strip() if user_id else None)
+    if not uid:
+        return True
+    allowed_ids = _get_authorized_pen_ids(uid) or set()
+    clean_animal = str(animal_id or "").strip().upper()
+    for pid in allowed_ids:
+        for a in animals_repo.list_by_pen(pid):
+            if str(a.get("id") or "").strip().upper() == clean_animal:
+                return True
+    return False
+
+
+# ====================================================================
 # MCP RESOURCES (ĐỌC NGỮ CẢNH HỆ THỐNG TRANG TRẠI)
 # ====================================================================
 
 @mcp.resource("resource://farm/overview")
 def get_farm_overview() -> str:
     """
-    MCP Resource: Thống kê tổng quan toàn trang trại (danh sách chuồng, thiết bị, vật nuôi, cây trồng).
+    MCP Resource: Thống kê tổng quan trang trại thuộc user_id hiện tại (danh sách chuồng, thiết bị, vật nuôi, cây trồng).
     """
     try:
-        pens = pens_repo.list_all()
-        devices = devices_repo.list_all()
-        animals = animals_repo.list_all()
-        crops = crops_repo.list_all()
-        sick_animals = animals_repo.get_sick_or_attention_animals()
+        uid = get_active_user_id()
+        pens = _get_authorized_pens(uid)
+        if uid:
+            allowed_ids = {str(p.get("id")) for p in pens if p.get("id")}
+            devices = [d for pid in allowed_ids for d in devices_repo.list_by_pen(pid)]
+            animals = [a for pid in allowed_ids for a in animals_repo.list_by_pen(pid)]
+            crops = [c for c in crops_repo.list_all() if str(c.get("pen_id")) in allowed_ids]
+            sick_animals = [a for a in animals_repo.get_sick_or_attention_animals() if str(a.get("pen_id")) in allowed_ids]
+        else:
+            devices = devices_repo.list_all()
+            animals = animals_repo.list_all()
+            crops = crops_repo.list_all()
+            sick_animals = animals_repo.get_sick_or_attention_animals()
 
         overview = {
+            "user_id": uid or "global",
             "total_pens": len(pens),
             "total_devices": len(devices),
             "devices_active": len([d for d in devices if d.get("is_active")]),
@@ -96,10 +211,11 @@ def get_farm_overview() -> str:
 @mcp.resource("resource://pens/list")
 def get_pens_list() -> str:
     """
-    MCP Resource: Danh sách đầy đủ tất cả các chuồng trại kèm thống kê chi tiết theo chuồng.
+    MCP Resource: Danh sách tất cả các chuồng trại thuộc user_id hiện tại kèm thống kê chi tiết theo chuồng.
     """
     try:
-        pens = pens_repo.list_all()
+        uid = get_active_user_id()
+        pens = _get_authorized_pens(uid)
         pens_detailed = []
         for p in pens:
             pid = str(p.get("id"))
@@ -122,12 +238,20 @@ def get_pens_list() -> str:
 @mcp.resource("resource://env/latest")
 def get_latest_env_logs() -> str:
     """
-    MCP Resource: Lấy các bản ghi cảm biến môi trường mới nhất trên toàn trại.
+    MCP Resource: Lấy các bản ghi cảm biến môi trường mới nhất trong các chuồng của user_id hiện tại.
     """
     try:
-        logs = env_repo.get_latest_logs(limit=10)
+        uid = get_active_user_id()
+        if uid:
+            allowed_ids = _get_authorized_pen_ids(uid) or set()
+            logs = []
+            for pid in allowed_ids:
+                logs.extend(env_repo.get_latest_logs(limit=3, pen_id=pid))
+            logs = sorted(logs, key=lambda x: str(x.get("created_at") or ""), reverse=True)[:10]
+        else:
+            logs = env_repo.get_latest_logs(limit=10)
         if not logs:
-            return "Chưa có dữ liệu cảm biến môi trường nào trong hệ thống."
+            return "Chưa có dữ liệu cảm biến môi trường nào trong khu vực của bạn."
         return json.dumps(logs, ensure_ascii=False, default=str, indent=2)
     except Exception as e:
         logger.error(f"Error fetching env logs resource: {e}")
@@ -137,10 +261,11 @@ def get_latest_env_logs() -> str:
 @mcp.resource("resource://inventory/low-stock")
 def get_low_stock_inventory() -> str:
     """
-    MCP Resource: Lấy danh sách thức ăn, thuốc, vật tư chạm hoặc thấp hơn ngưỡng tối thiểu.
+    MCP Resource: Lấy danh sách thức ăn, thuốc, vật tư của user_id hiện tại chạm hoặc thấp hơn ngưỡng tối thiểu.
     """
     try:
-        low_stock = inventory_repo.get_low_stock()
+        uid = get_active_user_id()
+        low_stock = inventory_repo.get_low_stock(user_id=uid)
         if not low_stock:
             return "Tất cả vật tư trong kho đều đang ở mức an toàn (không có mặt hàng nào thiếu hụt)."
         return json.dumps(low_stock, ensure_ascii=False, default=str, indent=2)
@@ -152,12 +277,16 @@ def get_low_stock_inventory() -> str:
 @mcp.resource("resource://animals/attention")
 def get_animals_attention() -> str:
     """
-    MCP Resource: Danh sách vật nuôi cần chăm sóc đặc biệt (ốm, sốt, bỏ ăn) kèm chuồng hiện tại.
+    MCP Resource: Danh sách vật nuôi thuộc user_id hiện tại cần chăm sóc đặc biệt (ốm, sốt, bỏ ăn).
     """
     try:
+        uid = get_active_user_id()
         sick = animals_repo.get_sick_or_attention_animals()
+        if uid:
+            allowed_ids = _get_authorized_pen_ids(uid) or set()
+            sick = [a for a in sick if str(a.get("pen_id")) in allowed_ids]
         if not sick:
-            return "Tất cả vật nuôi trong trang trại đều khỏe mạnh bình thường."
+            return "Tất cả vật nuôi trong khu vực của bạn đều khỏe mạnh bình thường."
         return json.dumps(sick, ensure_ascii=False, default=str, indent=2)
     except Exception as e:
         return f"Lỗi đọc danh sách vật nuôi: {str(e)}"
@@ -166,10 +295,14 @@ def get_animals_attention() -> str:
 @mcp.resource("resource://crops/harvest")
 def get_crops_harvest() -> str:
     """
-    MCP Resource: Danh sách cây trồng / vụ mùa sắp đến hạn thu hoạch trong 7 ngày tới.
+    MCP Resource: Danh sách cây trồng / vụ mùa thuộc user_id hiện tại sắp đến hạn thu hoạch trong 7 ngày tới.
     """
     try:
+        uid = get_active_user_id()
         upcoming = crops_repo.get_upcoming_harvests(within_days=7)
+        if uid:
+            allowed_ids = _get_authorized_pen_ids(uid) or set()
+            upcoming = [c for c in upcoming if str(c.get("pen_id")) in allowed_ids]
         if not upcoming:
             return "Không có cây trồng nào cần thu hoạch trong 7 ngày tới."
         return json.dumps(upcoming, ensure_ascii=False, default=str, indent=2)
@@ -180,10 +313,14 @@ def get_crops_harvest() -> str:
 @mcp.resource("resource://staff/today")
 def get_today_staff_attendance() -> str:
     """
-    MCP Resource: Danh sách nhân sự trang trại đã có mặt / điểm danh hôm nay kèm thời gian và chuồng phụ trách.
+    MCP Resource: Danh sách nhân sự trang trại đã có mặt / điểm danh hôm nay tại các chuồng của user_id hiện tại.
     """
     try:
+        uid = get_active_user_id()
         attendance = staff_repo.get_today_attendance()
+        if uid:
+            allowed_ids = _get_authorized_pen_ids(uid) or set()
+            attendance = [a for a in attendance if str(a.get("pen_id")) in allowed_ids]
         if not attendance:
             return "Hôm nay chưa có nhân sự nào điểm danh vào ca."
         return json.dumps(attendance, ensure_ascii=False, default=str, indent=2)
@@ -194,10 +331,14 @@ def get_today_staff_attendance() -> str:
 @mcp.resource("resource://staff/list")
 def get_all_staff_resource() -> str:
     """
-    MCP Resource: Danh sách toàn bộ nhân sự trang trại, chức vụ và chuồng trại phụ trách.
+    MCP Resource: Danh sách nhân sự trang trại phụ trách các chuồng của user_id hiện tại.
     """
     try:
+        uid = get_active_user_id()
         staff_members = staff_repo.list_all()
+        if uid:
+            allowed_ids = _get_authorized_pen_ids(uid) or set()
+            staff_members = [s for s in staff_members if str(s.get("pen_id")) in allowed_ids]
         return json.dumps(staff_members, ensure_ascii=False, default=str, indent=2)
     except Exception as e:
         return f"Lỗi đọc danh sách nhân sự: {str(e)}"
@@ -222,15 +363,23 @@ def transfer_animal_pen(
         reason: Lý do điều chuyển chuồng (ví dụ: 'Cách ly điều trị sốt', 'Tách đàn nuôi thịt')
     """
     try:
+        uid = get_active_user_id()
         target_clean = target_pen_id.strip()
         animal_clean = animal_id.strip()
 
-        # Kiểm tra chuồng đích, nếu chưa có thì tự động tạo
-        pen = pens_repo.get_by_id(target_clean)
+        if uid and not _is_animal_in_user_scope(animal_clean, uid):
+            return f"⛔ TỪ CHỐI TRUY CẬP (HARD RULE): Vật nuôi '{animal_clean}' không thuộc khu vực chuồng của tài khoản '{uid}'."
+
+        allowed, pen_or_err = _check_pen_access(target_clean, uid, allow_create_if_missing=True)
+        if not allowed:
+            return pen_or_err
+
+        # Kiểm tra chuồng đích, nếu chưa có thì tự động tạo thuộc user_id hiện tại
+        pen = pens_repo.get_by_id(target_clean, user_id=uid)
         if pen:
             target_clean = pen.get("id")
         else:
-            pens_repo.create_pen(pen_id=target_clean, name=f"Chuồng {target_clean}")
+            pens_repo.create_pen(pen_id=target_clean, name=f"Chuồng {target_clean}", user_id=uid)
 
         res = animals_repo.transfer_pen(
             animal_id=animal_clean,
@@ -251,15 +400,20 @@ def transfer_animal_pen(
 @mcp.tool()
 def get_pen_status(pen_id: str) -> str:
     """
-    Tra cứu chi tiết một chuồng bất kỳ: Chỉ số cảm biến (nhiệt độ, độ ẩm, mùi), thiết bị IoT và danh sách vật nuôi hiện có.
+    Tra cứu chi tiết một chuồng thuộc tài khoản hiện tại: Chỉ số cảm biến (nhiệt độ, độ ẩm, mùi), thiết bị IoT và danh sách vật nuôi hiện có.
 
     Args:
         pen_id: Mã chuồng cần tra cứu (ví dụ: '123', 'PEN-A02', 'PEN-ISO-01', 'PEN-B01')
     """
-    clean_pen = pen_id.strip()
-    pen = pens_repo.get_by_id(clean_pen)
+    uid = get_active_user_id()
+    allowed, pen_or_err = _check_pen_access(pen_id, uid)
+    if not allowed:
+        return pen_or_err
+
+    clean_pen = pen_or_err
+    pen = pens_repo.get_by_id(clean_pen, user_id=uid)
     if not pen:
-        return f"❌ Không tìm thấy chuồng có mã '{clean_pen}' trong hệ thống."
+        return f"❌ Không tìm thấy chuồng có mã '{clean_pen}' trong khu vực của bạn."
 
     animals = animals_repo.list_by_pen(clean_pen)
     devices = devices_repo.list_by_pen(clean_pen)
@@ -285,7 +439,7 @@ def manage_pen(
     pen_type: str = "livestock",
 ) -> str:
     """
-    Quản lý chuồng trại: Thêm chuồng mới hoặc cập nhật thông tin chuồng.
+    Quản lý chuồng trại: Thêm chuồng mới hoặc cập nhật thông tin chuồng trong khu vực của user_id hiện tại.
 
     Args:
         action: 'create' hoặc 'update'
@@ -295,10 +449,19 @@ def manage_pen(
     """
     action_clean = action.strip().lower()
     clean_id = pen_id.strip()
+    uid = get_active_user_id()
 
     try:
         if action_clean in ["create", "add"]:
-            created = pens_repo.create_pen(pen_id=clean_id, name=name or f"Chuồng {clean_id}", pen_type=pen_type)
+            allowed, pen_or_err = _check_pen_access(clean_id, uid, allow_create_if_missing=True)
+            if not allowed:
+                return pen_or_err
+            created = pens_repo.create_pen(
+                pen_id=clean_id,
+                name=name or f"Chuồng {clean_id}",
+                pen_type=pen_type,
+                user_id=uid,
+            )
             _notify_websocket_safe("pen_update", {"action": "create", "pen": created})
             return f"✅ Đã tạo mới thành công chuồng [{clean_id}] - '{created.get('name')}' (Loại: {pen_type})."
         else:
@@ -315,7 +478,7 @@ def control_device(
     device_id: str = "",
 ) -> str:
     """
-    Điều khiển thiết bị IoT tại chuồng trại bất kỳ (bật/tắt quạt thông gió, đèn sưởi, máy phun sương).
+    Điều khiển thiết bị IoT tại chuồng trại thuộc tài khoản hiện tại (bật/tắt quạt thông gió, đèn sưởi, máy phun sương).
 
     Args:
         action: 'turn_on' (bật), 'turn_off' (tắt), hoặc 'toggle'
@@ -325,17 +488,22 @@ def control_device(
     """
     action_clean = action.strip().lower()
     is_active = True if action_clean in ["turn_on", "on", "bat", "bật", "mo", "mở"] else False
+    uid = get_active_user_id()
+    target_pen = pen_id.strip() if pen_id else (resolve_user_default_pen(uid) or "123")
+    allowed, pen_or_err = _check_pen_access(target_pen, uid)
+    if not allowed:
+        return pen_or_err
 
     try:
         updated = devices_repo.set_device_state(
             device_id=device_id if device_id else None,
-            pen_id=pen_id if pen_id else "123",
+            pen_id=pen_or_err,
             device_name=device_name if device_name else None,
             is_active=is_active,
         )
         status_text = "ĐÃ BẬT 🟢" if is_active else "ĐÃ TẮT 🔴"
         _notify_websocket_safe("device_update", updated)
-        return f"✅ {status_text} thiết bị '{updated.get('name')}' (ID: {updated.get('id')}) tại chuồng {pen_id}."
+        return f"✅ {status_text} thiết bị '{updated.get('name')}' (ID: {updated.get('id')}) tại chuồng {pen_or_err}."
     except Exception as e:
         logger.error(f"Error in control_device: {e}")
         return f"❌ Lỗi khi điều khiển thiết bị: {str(e)}"
@@ -358,15 +526,21 @@ def log_feeding(
     if amount <= 0:
         return "❌ Lượng thức ăn cho ăn phải lớn hơn 0."
 
+    uid = get_active_user_id()
+    allowed, pen_or_err = _check_pen_access(pen_id, uid)
+    if not allowed:
+        return pen_or_err
+
     try:
         updated_stock = inventory_repo.adjust_quantity(
             item_name=food_name,
             delta_quantity=-abs(amount),
-            pen_id=pen_id,
-            note=f"Xuất cho chuồng {pen_id} ăn",
+            pen_id=pen_or_err,
+            note=f"Xuất cho chuồng {pen_or_err} ăn",
+            user_id=uid,
         )
 
-        feed_log = feed_repo.log_feeding(pen_id=pen_id, food_name=food_name, amount=amount)
+        feed_log = feed_repo.log_feeding(pen_id=pen_or_err, food_name=food_name, amount=amount)
 
         _notify_websocket_safe("feed_update", {"feed_log": feed_log, "inventory": updated_stock})
 
@@ -374,7 +548,7 @@ def log_feeding(
         if float(updated_stock.get("quantity", 0)) <= float(updated_stock.get("min_threshold", 5.0)):
             warning = f" ⚠️ CẢNH BÁO: Thức ăn '{food_name}' đã chạm/dưới ngưỡng an toàn ({updated_stock.get('quantity')} {updated_stock.get('unit')} còn lại)!"
 
-        return f"✅ Đã ghi nhận cho chuồng {pen_id} ăn {amount} kg '{food_name}'. Tồn kho còn lại: {updated_stock.get('quantity')} {updated_stock.get('unit')}.{warning}"
+        return f"✅ Đã ghi nhận cho chuồng {pen_or_err} ăn {amount} kg '{food_name}'. Tồn kho còn lại: {updated_stock.get('quantity')} {updated_stock.get('unit')}.{warning}"
 
     except ValueError as ve:
         return f"❌ Lỗi cho ăn: {str(ve)}"
@@ -391,7 +565,7 @@ def update_animal_health(
     health_type: str = "Disease",
 ) -> str:
     """
-    Cập nhật tình trạng sức khỏe hoặc bệnh tật cho cá thể vật nuôi (Khỏe, Sốt nhẹ, Bệnh Tai Xanh, Dịch tả heo châu phi, Tiêu chảy PED, Cách ly) và lưu nhật ký y tế/phác đồ điều trị.
+    Cập nhật tình trạng sức khỏe hoặc bệnh tật cho cá thể vật nuôi thuộc tài khoản hiện tại.
 
     Args:
         animal_id: Mã định danh cá thể (ví dụ: 'HEO-101', 'HEO-102', 'HEO-201')
@@ -400,6 +574,10 @@ def update_animal_health(
         health_type: Phân loại nhật ký ('Routine', 'Disease', 'Vaccine')
     """
     try:
+        uid = get_active_user_id()
+        if uid and not _is_animal_in_user_scope(animal_id, uid):
+            return f"⛔ TỪ CHỐI TRUY CẬP (HARD RULE): Vật nuôi '{animal_id}' không thuộc khu vực chuồng của tài khoản '{uid}'."
+
         res = animals_repo.update_health_status(
             animal_id=animal_id,
             status=status,
@@ -424,7 +602,7 @@ def add_animal(
     status: str = "Khoe",
 ) -> str:
     """
-    Thêm cá thể mới hoặc thêm số lượng vật nuôi vào chuồng trại (ví dụ: thêm 5 con heo vào chuồng PEN-A02, hoặc thêm cá thể bò BO-01).
+    Thêm cá thể mới hoặc thêm số lượng vật nuôi vào chuồng trại thuộc tài khoản hiện tại.
 
     Args:
         species: Loài vật nuôi (ví dụ: 'Heo', 'Heo Siêu Nạc', 'Bò', 'Gà', 'Dê', 'Vịt')
@@ -436,12 +614,17 @@ def add_animal(
         status: Tình trạng ban đầu ('Khoe', 'Sot nhe', ...)
     """
     try:
-        clean_pen = pen_id.strip() if pen_id else "123"
-        pen = pens_repo.get_by_id(clean_pen)
+        uid = get_active_user_id()
+        clean_pen = pen_id.strip() if pen_id else (resolve_user_default_pen(uid, "livestock") or "123")
+        allowed, pen_or_err = _check_pen_access(clean_pen, uid, allow_create_if_missing=True)
+        if not allowed:
+            return pen_or_err
+
+        pen = pens_repo.get_by_id(clean_pen, user_id=uid)
         if pen:
             clean_pen = pen.get("id")
         else:
-            pens_repo.create_pen(pen_id=clean_pen, name=f"Chuồng {clean_pen}")
+            pens_repo.create_pen(pen_id=clean_pen, name=f"Chuồng {clean_pen}", user_id=uid)
 
         if count > 1 or not animal_id.strip():
             created_list = animals_repo.add_animals_batch(
@@ -473,24 +656,47 @@ def add_animal(
 
 
 def _resolve_crop(crop_name_or_id: str, pen_id: str = ""):
-    """Helper to locate a crop by ID or partial name."""
+    """Helper to locate a crop by ID or partial name, strictly scoped to active user_id."""
     clean_val = str(crop_name_or_id).strip()
+    uid = get_active_user_id()
+    allowed_ids = _get_authorized_pen_ids(uid)
+
+    def _in_scope(crop_obj):
+        if not crop_obj:
+            return False
+        if allowed_ids is None:
+            return True
+        return str(crop_obj.get("pen_id")) in allowed_ids
+
     try:
         cid = int(clean_val)
         c = crops_repo.get_by_id(cid)
-        if c:
+        if _in_scope(c):
             return c
     except ValueError:
         pass
 
+    if allowed_ids is not None and not pen_id:
+        for pid in allowed_ids:
+            c = crops_repo.find_by_name(clean_val, pen_id=pid)
+            if c:
+                return c
+        for part in ["cà chua", "dưa lưới", "rau muống", "lúa", "dâu tây", "xà lách"]:
+            if part in clean_val.lower():
+                for pid in allowed_ids:
+                    c = crops_repo.find_by_name(part, pen_id=pid)
+                    if c:
+                        return c
+        return None
+
     c = crops_repo.find_by_name(clean_val, pen_id=pen_id if pen_id else None)
-    if c:
+    if _in_scope(c):
         return c
 
     for part in ["cà chua", "dưa lưới", "rau muống", "lúa", "dâu tây", "xà lách"]:
         if part in clean_val.lower():
             c = crops_repo.find_by_name(part, pen_id=pen_id if pen_id else None)
-            if c:
+            if _in_scope(c):
                 return c
     return None
 
@@ -516,12 +722,17 @@ def plant_crop(
         status: Trạng thái sinh trưởng ban đầu ('Growing', 'Flowering', 'Ripening')
     """
     try:
-        clean_pen = pen_id.strip() if pen_id else "PEN-B01"
-        pen = pens_repo.get_by_id(clean_pen)
+        uid = get_active_user_id()
+        clean_pen = pen_id.strip() if pen_id else (resolve_user_default_pen(uid, "crops") or "PEN-B01")
+        allowed, pen_or_err = _check_pen_access(clean_pen, uid, allow_create_if_missing=True)
+        if not allowed:
+            return pen_or_err
+
+        pen = pens_repo.get_by_id(clean_pen, user_id=uid)
         if pen:
             clean_pen = pen.get("id")
         else:
-            pens_repo.create_pen(pen_id=clean_pen, name=f"Khu Trồng {clean_pen}", pen_type="crops")
+            pens_repo.create_pen(pen_id=clean_pen, name=f"Khu Trồng {clean_pen}", pen_type="crops", user_id=uid)
 
         created = crops_repo.create_crop(
             name=name,
@@ -558,9 +769,14 @@ def manage_crop_quantity(
         pen_id: Mã chuồng nếu cần lọc chính xác theo khu vực
     """
     try:
+        uid = get_active_user_id()
+        if pen_id:
+            allowed, pen_or_err = _check_pen_access(pen_id, uid)
+            if not allowed:
+                return pen_or_err
         crop = _resolve_crop(crop_name_or_id, pen_id=pen_id)
         if not crop:
-            return f"❌ Không tìm thấy cây trồng '{crop_name_or_id}' trong trang trại."
+            return f"❌ Không tìm thấy cây trồng '{crop_name_or_id}' trong khu vực của bạn."
 
         mode = "adjust" if action.lower() in ["add", "increase", "them", "tăng", "reduce", "decrease", "giam", "giảm"] else "set"
         delta_qty = -abs(quantity) if action.lower() in ["reduce", "decrease", "giam", "giảm"] else quantity
@@ -594,9 +810,19 @@ def log_crop_growth(
         pen_id: Mã chuồng nếu cần xác định rõ khu vực
     """
     try:
+        uid = get_active_user_id()
+        if pen_id:
+            allowed, pen_or_err = _check_pen_access(pen_id, uid, allow_create_if_missing=True)
+            if not allowed:
+                return pen_or_err
         crop = _resolve_crop(crop_name_or_id, pen_id=pen_id)
         if not crop:
-            clean_pen = pen_id if pen_id else "PEN-B01"
+            clean_pen = pen_id.strip() if pen_id else (resolve_user_default_pen(uid, "crops") or "PEN-B01")
+            allowed, pen_or_err = _check_pen_access(clean_pen, uid, allow_create_if_missing=True)
+            if not allowed:
+                return pen_or_err
+            if not pens_repo.get_by_id(clean_pen, user_id=uid):
+                pens_repo.create_pen(pen_id=clean_pen, name=f"Khu Trồng {clean_pen}", pen_type="crops", user_id=uid)
             crop = crops_repo.create_crop(name=crop_name_or_id, quantity=1, pen_id=clean_pen)
 
         log_entry = crops_repo.log_growth(
@@ -631,9 +857,19 @@ def log_crop_care(
         pen_id: Mã chuồng nếu cần chỉ định khu vực
     """
     try:
+        uid = get_active_user_id()
+        if pen_id:
+            allowed, pen_or_err = _check_pen_access(pen_id, uid, allow_create_if_missing=True)
+            if not allowed:
+                return pen_or_err
         crop = _resolve_crop(crop_name_or_id, pen_id=pen_id)
         if not crop:
-            clean_pen = pen_id if pen_id else "PEN-B01"
+            clean_pen = pen_id.strip() if pen_id else (resolve_user_default_pen(uid, "crops") or "PEN-B01")
+            allowed, pen_or_err = _check_pen_access(clean_pen, uid, allow_create_if_missing=True)
+            if not allowed:
+                return pen_or_err
+            if not pens_repo.get_by_id(clean_pen, user_id=uid):
+                pens_repo.create_pen(pen_id=clean_pen, name=f"Khu Trồng {clean_pen}", pen_type="crops", user_id=uid)
             crop = crops_repo.create_crop(name=crop_name_or_id, quantity=1, pen_id=clean_pen)
 
         care_entry = crops_repo.log_care(
@@ -668,9 +904,19 @@ def update_crop_disease(
         pen_id: Mã chuồng nếu cần
     """
     try:
+        uid = get_active_user_id()
+        if pen_id:
+            allowed, pen_or_err = _check_pen_access(pen_id, uid, allow_create_if_missing=True)
+            if not allowed:
+                return pen_or_err
         crop = _resolve_crop(crop_name_or_id, pen_id=pen_id)
         if not crop:
-            clean_pen = pen_id if pen_id else "PEN-B01"
+            clean_pen = pen_id.strip() if pen_id else (resolve_user_default_pen(uid, "crops") or "PEN-B01")
+            allowed, pen_or_err = _check_pen_access(clean_pen, uid, allow_create_if_missing=True)
+            if not allowed:
+                return pen_or_err
+            if not pens_repo.get_by_id(clean_pen, user_id=uid):
+                pens_repo.create_pen(pen_id=clean_pen, name=f"Khu Trồng {clean_pen}", pen_type="crops", user_id=uid)
             crop = crops_repo.create_crop(name=crop_name_or_id, quantity=1, pen_id=clean_pen)
 
         new_status = f"Bệnh: {disease_name}"
@@ -704,12 +950,14 @@ def manage_inventory(
     item_clean = name.strip()
 
     try:
+        uid = get_active_user_id()
         if action_clean in ["create", "add"]:
             created = inventory_repo.create_item(
                 item_name=item_clean,
                 quantity=quantity,
                 unit=unit,
                 category=category,
+                user_id=uid,
             )
             _notify_websocket_safe("inventory_update", {"action": "create", "item": created})
             return f"✅ Đã thêm mới mặt hàng '{item_clean}' ({category}) với số lượng {quantity} {unit}."
@@ -717,14 +965,14 @@ def manage_inventory(
         elif action_clean in ["import", "increase", "add_stock"]:
             if quantity <= 0:
                 return "❌ Số lượng nhập kho phải lớn hơn 0."
-            updated = inventory_repo.adjust_quantity(item_name=item_clean, delta_quantity=abs(quantity))
+            updated = inventory_repo.adjust_quantity(item_name=item_clean, delta_quantity=abs(quantity), user_id=uid)
             _notify_websocket_safe("inventory_update", {"action": "import", "item": updated})
             return f"✅ Đã nhập thêm {quantity} {updated.get('unit')} vào kho cho '{item_clean}'. Tồn kho hiện tại: {updated.get('quantity')} {updated.get('unit')}."
 
         elif action_clean in ["export", "decrease", "reduce_stock"]:
             if quantity <= 0:
                 return "❌ Số lượng xuất kho phải lớn hơn 0."
-            updated = inventory_repo.adjust_quantity(item_name=item_clean, delta_quantity=-abs(quantity))
+            updated = inventory_repo.adjust_quantity(item_name=item_clean, delta_quantity=-abs(quantity), user_id=uid)
             _notify_websocket_safe("inventory_update", {"action": "export", "item": updated})
             warning = ""
             if float(updated.get("quantity", 0)) <= float(updated.get("min_threshold", 5.0)):
@@ -756,18 +1004,23 @@ def manage_schedule(
     task_clean = task_name.strip()
 
     try:
+        uid = get_active_user_id()
         final_date = target_date.strip() if target_date.strip() else date.today().isoformat()
 
         if action_clean in ["create", "add"]:
+            target_pen = pen_id.strip() if pen_id else (resolve_user_default_pen(uid) or "123")
+            allowed, pen_or_err = _check_pen_access(target_pen, uid)
+            if not allowed:
+                return pen_or_err
             created = schedules_repo.create_schedule(
                 task_name=task_clean,
                 target_date=final_date,
-                pen_id=pen_id,
+                pen_id=pen_or_err,
                 note=note,
                 status="pending",
             )
             _notify_websocket_safe("schedule_update", {"action": "create", "schedule": created})
-            return f"✅ Đã lên lịch thành công cho công việc: '{task_clean}' vào ngày {final_date} (Chuồng {pen_id}). Ghi chú: {note or 'Không có'}."
+            return f"✅ Đã lên lịch thành công cho công việc: '{task_clean}' vào ngày {final_date} (Chuồng {pen_or_err}). Ghi chú: {note or 'Không có'}."
 
         elif action_clean in ["done", "complete", "finish"]:
             updated = schedules_repo.update_schedule(
@@ -796,9 +1049,14 @@ def create_system_alert(
     Tạo cảnh báo bất thường trong trang trại (môi trường, mùi hôi, sức khỏe vật nuôi, cạn kho) và phát realtime qua WebSocket.
     """
     try:
-        created = alerts_repo.create_alert(alert_type=alert_type, message=message, pen_id=pen_id)
+        uid = get_active_user_id()
+        target_pen = pen_id.strip() if pen_id else (resolve_user_default_pen(uid) or "123")
+        allowed, pen_or_err = _check_pen_access(target_pen, uid)
+        if not allowed:
+            return pen_or_err
+        created = alerts_repo.create_alert(alert_type=alert_type, message=message, pen_id=pen_or_err)
         _notify_websocket_safe("alert", created)
-        return f"🚨 Đã phát và lưu cảnh báo thành công: [{created.get('alert_type')}] {created.get('message')} (Chuồng: {pen_id})."
+        return f"🚨 Đã phát và lưu cảnh báo thành công: [{created.get('alert_type')}] {created.get('message')} (Chuồng: {pen_or_err})."
     except Exception as e:
         logger.error(f"Error in create_system_alert: {e}")
         return f"❌ Lỗi khi ghi nhận cảnh báo: {str(e)}"
@@ -817,10 +1075,19 @@ def get_staff_list(pen_id: str = "") -> str:
         pen_id: Mã chuồng cần lọc nhân sự (ví dụ: '123', 'PEN-ISO-01', để trống để xem tất cả)
     """
     try:
+        uid = get_active_user_id()
         clean_pen = pen_id.strip() if pen_id else None
+        if uid and clean_pen:
+            allowed, pen_or_err = _check_pen_access(clean_pen, uid)
+            if not allowed:
+                return pen_or_err
+            clean_pen = pen_or_err
         staff = staff_repo.list_all(pen_id=clean_pen)
+        if uid and not clean_pen:
+            allowed_ids = _get_authorized_pen_ids(uid) or set()
+            staff = [s for s in staff if str(s.get("pen_id")) in allowed_ids]
         if not staff:
-            return f"Không tìm thấy nhân sự nào thuộc khu vực/chuồng '{pen_id}'." if pen_id else "Chưa có nhân sự nào trong hệ thống."
+            return f"Không tìm thấy nhân sự nào thuộc khu vực/chuồng '{pen_id}'." if pen_id else "Chưa có nhân sự nào trong khu vực của bạn."
         return json.dumps(staff, ensure_ascii=False, default=str, indent=2)
     except Exception as e:
         logger.error(f"Error in get_staff_list: {e}")
@@ -842,6 +1109,11 @@ def check_in_staff_face(
         note: Ghi chú ca trực hoặc kiểm tra bảo hộ
     """
     try:
+        uid = get_active_user_id()
+        target_pen = pen_id.strip() if pen_id else (resolve_user_default_pen(uid) or "123")
+        allowed, pen_or_err = _check_pen_access(target_pen, uid)
+        if not allowed:
+            return pen_or_err
         staff_member = staff_repo.get_by_id(staff_id)
         if not staff_member:
             return f"❌ Không tìm thấy nhân sự có mã '{staff_id}' trong hệ thống."
@@ -850,7 +1122,7 @@ def check_in_staff_face(
         record = staff_repo.log_attendance(
             staff_id=staff_id,
             staff_name=staff_name,
-            pen_id=pen_id,
+            pen_id=pen_or_err,
             status="present",
             confidence=0.98,
             is_real=True,
@@ -860,7 +1132,7 @@ def check_in_staff_face(
         _notify_websocket_safe("staff_checkin", record)
         return (
             f"✅ ĐÃ ĐIỂM DANH THÀNH CÔNG: Nhân sự [{staff_id}] {staff_name} - {staff_member.get('role')} "
-            f"đã nhận ca tại chuồng [{pen_id}]. Độ tin cậy Face AI: 98% (Người thật). Ghi chú: {note or 'Vào ca đúng giờ'}."
+            f"đã nhận ca tại chuồng [{pen_or_err}]. Độ tin cậy Face AI: 98% (Người thật). Ghi chú: {note or 'Vào ca đúng giờ'}."
         )
     except Exception as e:
         logger.error(f"Error in check_in_staff_face: {e}")
@@ -873,8 +1145,13 @@ def get_today_attendance_summary() -> str:
     Tổng hợp báo cáo điểm danh nhân sự hôm nay: Số người đã vào ca, danh sách có mặt và chuồng phụ trách.
     """
     try:
+        uid = get_active_user_id()
         attendance = staff_repo.get_today_attendance()
         all_staff = staff_repo.list_all()
+        if uid:
+            allowed_ids = _get_authorized_pen_ids(uid) or set()
+            attendance = [a for a in attendance if str(a.get("pen_id")) in allowed_ids]
+            all_staff = [s for s in all_staff if str(s.get("pen_id")) in allowed_ids]
         present_ids = {a.get("staff_id") for a in attendance}
 
         summary = {

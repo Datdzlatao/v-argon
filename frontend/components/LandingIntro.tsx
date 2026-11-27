@@ -1,6 +1,7 @@
 'use client';
 
 import React, { useEffect, useRef, useState } from 'react';
+import { VArgonLogo } from './VArgonLogo';
 import {
   Sprout,
   ArrowRight,
@@ -268,8 +269,8 @@ export default function LandingIntro({
           </button>
 
           <div className="flex items-center gap-2">
-            <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-farm-600 text-white">
-              <Sprout className="h-4 w-4" />
+            <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-[#15803D] text-white">
+              <VArgonLogo className="h-4 w-4" variant="white" />
             </div>
             <span className="text-sm font-extrabold tracking-tight hidden sm:inline">
               V-ARGON
@@ -416,8 +417,8 @@ export default function LandingIntro({
       <header className="sticky top-0 z-50 border-b border-emerald-900/10 bg-white/90 backdrop-blur-md text-slate-900">
         <div className="mx-auto flex max-w-[1200px] items-center justify-between px-4 sm:px-6 py-3.5 gap-3">
           <a href="#top" className="flex items-center gap-2.5 group shrink-0">
-            <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-emerald-600 text-white shadow-sm transition group-hover:scale-105">
-              <Sprout className="h-5 w-5" />
+            <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-[#15803D] text-white shadow-sm transition group-hover:scale-105">
+              <VArgonLogo className="h-5 w-5" variant="white" />
             </div>
             <div>
               <span className="block text-base font-extrabold tracking-tight leading-none whitespace-nowrap text-slate-900">
@@ -768,7 +769,7 @@ export default function LandingIntro({
       <footer className="bg-farm-950 text-emerald-100/80 py-10">
         <div className="mx-auto max-w-[1180px] px-5 flex flex-col sm:flex-row items-center justify-between gap-4 text-xs sm:text-sm">
           <div className="flex items-center gap-2.5 text-white font-bold">
-            <Sprout className="h-5 w-5 text-farm-600" />
+            <VArgonLogo className="h-5 w-5" variant="dark" />
             <span>V-ARGON • Quản Lý Chăn Nuôi &amp; Trồng Trọt AI</span>
           </div>
           <div className="flex items-center gap-5">

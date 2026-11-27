@@ -9,6 +9,11 @@ color farm_secondary
 color farm_surface
 color farm_text_main
 color farm_text_muted
+drawable ic_launcher_background
+drawable ic_launcher_foreground
+drawable ic_v_argon_mark
+mipmap ic_launcher
+mipmap ic_launcher_round
 string app_name
 string cultivation_tab
 string demo_mode

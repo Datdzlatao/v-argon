@@ -1,6 +1,7 @@
 'use client';
 
 import React, { useState } from 'react';
+import { VArgonLogo } from './VArgonLogo';
 import {
   Sprout,
   Search,
@@ -58,8 +59,8 @@ export default function Navbar({
         {/* Left: Brand & Search */}
         <div className="flex items-center gap-3 min-w-0 shrink-0">
           <div className="flex items-center gap-2.5 cursor-pointer select-none shrink-0">
-            <div className="w-9 h-9 rounded-xl bg-gradient-to-tr from-emerald-700 to-emerald-500 flex items-center justify-center text-white shadow-sm shrink-0">
-              <Sprout className="w-5 h-5" />
+            <div className="w-9 h-9 rounded-xl bg-[#15803D] flex items-center justify-center text-white shadow-sm shrink-0">
+              <VArgonLogo className="w-5 h-5" variant="white" />
             </div>
             <div className="hidden sm:block leading-tight">
               <span className="block font-extrabold text-base tracking-tight text-slate-900 whitespace-nowrap">
