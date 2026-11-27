@@ -29,9 +29,16 @@ fun InventoryScreen(
     modifier: Modifier = Modifier
 ) {
     val inventory by viewModel.inventory.collectAsState()
+    val operationLogs by viewModel.operationLogs.collectAsState()
 
+    var activeTab by remember { mutableIntStateOf(0) } // 0: Tồn Kho, 1: Nhật Ký Kho
+    var logFilter by remember { mutableStateOf("ALL") }
     var searchQuery by remember { mutableStateOf("") }
     var selectedCategory by remember { mutableStateOf("Tất cả") }
+
+    LaunchedEffect(Unit) {
+        viewModel.loadOperationLogs()
+    }
 
     var showImportDialog by remember { mutableStateOf(false) }
     var showExportDialog by remember { mutableStateOf(false) }
@@ -166,11 +173,59 @@ fun InventoryScreen(
                         }
                     }
                 }
+
+                Spacer(modifier = Modifier.height(10.dp))
+
+                TabRow(selectedTabIndex = activeTab, containerColor = Color.Transparent, contentColor = FarmPrimary) {
+                    Tab(selected = activeTab == 0, onClick = { activeTab = 0 }, text = { Text("Tồn Kho (${filteredItems.size})", fontWeight = FontWeight.Bold, fontSize = 12.sp) })
+                    Tab(selected = activeTab == 1, onClick = { activeTab = 1; viewModel.loadOperationLogs() }, text = { Text("Nhật Ký Kho (${operationLogs.size})", fontWeight = FontWeight.Bold, fontSize = 12.sp) })
+                }
             }
         }
 
-        // Danh sách mặt hàng
-        if (filteredItems.isEmpty()) {
+        if (activeTab == 1) {
+            Column(modifier = Modifier.fillMaxSize()) {
+                Row(
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp),
+                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    listOf("ALL" to "Tất cả", "IMPORT" to "Nhập", "EXPORT" to "Xuất", "ANIMAL_EXPORT" to "Xuất chuồng", "CROP_HARVEST" to "Thu hoạch").forEach { (key, label) ->
+                        val sel = logFilter == key
+                        Surface(
+                            onClick = { logFilter = key },
+                            shape = RoundedCornerShape(10.dp),
+                            color = if (sel) FarmPrimary else Color.White,
+                            border = androidx.compose.foundation.BorderStroke(1.dp, if (sel) FarmPrimary else FarmCardBorderLight)
+                        ) {
+                            Text(label, fontSize = 11.sp, fontWeight = FontWeight.Bold, color = if (sel) Color.White else FarmTextMutedLight, modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp))
+                        }
+                    }
+                }
+                val filteredLogs = operationLogs.filter { log ->
+                    (logFilter == "ALL" || log.actionType == logFilter) &&
+                    (searchQuery.isBlank() || log.itemName.contains(searchQuery, ignoreCase = true) || (log.note ?: "").contains(searchQuery, ignoreCase = true))
+                }
+                if (filteredLogs.isEmpty()) {
+                    Box(modifier = Modifier.fillMaxSize().padding(32.dp), contentAlignment = Alignment.Center) {
+                        Text("Chưa có nhật ký xuất nhập nào.", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 13.sp)
+                    }
+                } else {
+                    LazyColumn(contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        items(filteredLogs) { log ->
+                            Card(shape = RoundedCornerShape(14.dp), colors = CardDefaults.cardColors(containerColor = Color.White), border = androidx.compose.foundation.BorderStroke(1.dp, FarmCardBorderLight)) {
+                                Row(modifier = Modifier.fillMaxWidth().padding(12.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                                    Column(modifier = Modifier.weight(1f)) {
+                                        Text("${log.actionType} • ${log.itemName}", fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                                        if (!log.note.isNullOrBlank()) Text(log.note, fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                    }
+                                    Text("${log.quantity} ${log.unit ?: ""}", fontWeight = FontWeight.Bold, color = FarmPrimary, fontSize = 13.sp)
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        } else if (filteredItems.isEmpty()) {
             Box(
                 modifier = Modifier
                     .fillMaxSize()

@@ -553,9 +553,22 @@ export default function IosManageModules({
             </div>
             <button type="submit" className="w-full py-2 rounded-xl bg-sky-600 text-white text-[12px] font-bold">+ Giao khoán</button>
             {quotas.map((q) => (
-              <div key={q.id} className="p-2 rounded-xl bg-slate-50 flex justify-between text-[12px]">
-                <span><strong>{q.staff_name}</strong> • {q.task_name}</span>
-                <span className="font-bold text-emerald-700">{q.completed}/{q.target} {q.unit}</span>
+              <div key={q.id} className="p-2.5 rounded-xl bg-slate-50 flex items-center justify-between gap-2 text-[12px]">
+                <span className="truncate"><strong>{q.staff_name}</strong> • {q.task_name}</span>
+                <div className="flex items-center gap-1.5 shrink-0">
+                  <span className="font-bold text-emerald-700">{q.completed}/{q.target} {q.unit}</span>
+                  <button
+                    type="button"
+                    onClick={async () => {
+                      const next = Number(q.completed || 0) + 1;
+                      setQuotas((prev) => prev.map((x) => (x.id === q.id ? { ...x, completed: next } : x)));
+                      await supabase.from('farm_hr_quotas').update({ completed: next }).eq('id', q.id);
+                    }}
+                    className="px-2 py-0.5 rounded-lg bg-emerald-600 text-white text-[10px] font-bold"
+                  >
+                    +1
+                  </button>
+                </div>
               </div>
             ))}
           </form>
@@ -564,9 +577,26 @@ export default function IosManageModules({
             <div className="bg-white rounded-2xl p-3.5 shadow-sm border border-black/5 space-y-1.5">
               <span className="text-[12px] font-bold text-slate-900 block">Bảng lương nhân sự ({staffList.length})</span>
               {staffList.map((s) => (
-                <div key={s.id} className="p-2 rounded-xl bg-slate-50 flex justify-between text-[12px]">
-                  <span className="font-bold">{s.full_name || s.name || s.id}</span>
-                  <span className="text-emerald-700 font-bold">{Number(s.daily_wage || 0).toLocaleString('vi-VN')} đ/ngày</span>
+                <div key={s.id} className="p-2 rounded-xl bg-slate-50 flex items-center justify-between gap-2 text-[12px]">
+                  <span className="font-bold truncate">{s.full_name || s.name || s.id}</span>
+                  <button
+                    type="button"
+                    onClick={async () => {
+                      const val = prompt(`Nhập lương ngày mới (VNĐ) cho ${s.full_name || s.name || s.id}:`, String(s.daily_wage || 250000));
+                      if (!val) return;
+                      const num = Number(val);
+                      if (!(num >= 0)) return;
+                      await fetch(`${backendUrl}/api/staff/${encodeURIComponent(s.id)}/wage`, {
+                        method: 'PATCH',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ daily_wage: num }),
+                      }).catch(() => {});
+                      setStaffList((prev) => prev.map((x) => (x.id === s.id ? { ...x, daily_wage: num } : x)));
+                    }}
+                    className="text-emerald-700 font-bold underline decoration-dotted shrink-0"
+                  >
+                    {Number(s.daily_wage || 0).toLocaleString('vi-VN')} đ/ngày
+                  </button>
                 </div>
               ))}
             </div>

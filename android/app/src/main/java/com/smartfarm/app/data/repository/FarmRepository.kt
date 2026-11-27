@@ -7,7 +7,10 @@ import com.google.gson.reflect.TypeToken
 import com.smartfarm.app.data.models.*
 import com.smartfarm.app.data.remote.*
 import kotlinx.coroutines.flow.Flow
+import okhttp3.MediaType.Companion.toMediaTypeOrNull
+import okhttp3.MultipartBody
 import okhttp3.OkHttpClient
+import okhttp3.RequestBody.Companion.toRequestBody
 import okhttp3.logging.HttpLoggingInterceptor
 import retrofit2.Retrofit
 import retrofit2.converter.gson.GsonConverterFactory
@@ -922,6 +925,135 @@ class FarmRepository(
     suspend fun stopPenCamera(penId: String): Boolean {
         return try {
             val res = actionApi.stopCamera(mapOf("target_id" to penId.trim()))
+            res.isSuccessful
+        } catch (e: Exception) {
+            e.printStackTrace()
+            false
+        }
+    }
+
+    // ==========================================
+    // HEALTH, WEIGHT, CROP & OPERATION LOGS
+    // ==========================================
+
+    suspend fun getHealthLogs(animalId: String): List<HealthLog> {
+        return supabase.queryList(
+            "health_logs",
+            mapOf("animal_id" to "eq.$animalId", "order" to "created_at.desc"),
+            object : TypeToken<List<HealthLog>>() {}
+        )
+    }
+
+    suspend fun addHealthLog(animalId: String, type: String, title: String, note: String): Boolean {
+        return supabase.insert("health_logs", mapOf(
+            "animal_id" to animalId,
+            "type" to type,
+            "title" to title,
+            "note" to note
+        ))
+    }
+
+    suspend fun deleteHealthLog(logId: String): Boolean {
+        return supabase.delete("health_logs", "id", logId)
+    }
+
+    suspend fun getWeightLogs(animalId: String): List<WeightLog> {
+        return supabase.queryList(
+            "weight_logs",
+            mapOf("animal_id" to "eq.$animalId", "order" to "created_at.desc"),
+            object : TypeToken<List<WeightLog>>() {}
+        )
+    }
+
+    suspend fun addWeightLog(animalId: String, weight: Double): Boolean {
+        val ok = supabase.insert("weight_logs", mapOf("animal_id" to animalId, "weight" to weight))
+        supabase.update("animals", "id", animalId, mapOf("weight" to weight))
+        return ok
+    }
+
+    suspend fun deleteWeightLog(logId: String): Boolean {
+        return supabase.delete("weight_logs", "id", logId)
+    }
+
+    suspend fun getCropGrowthLogs(cropId: String): List<CropGrowthLog> {
+        return supabase.queryList(
+            "crop_growth_logs",
+            mapOf("crop_id" to "eq.$cropId", "order" to "created_at.desc"),
+            object : TypeToken<List<CropGrowthLog>>() {}
+        )
+    }
+
+    suspend fun addCropGrowthLog(cropId: String, heightCm: Double): Boolean {
+        return supabase.insert("crop_growth_logs", mapOf("crop_id" to cropId, "height_or_size" to heightCm))
+    }
+
+    suspend fun deleteCropGrowthLog(logId: String): Boolean {
+        return supabase.delete("crop_growth_logs", "id", logId)
+    }
+
+    suspend fun getCropCareLogs(cropId: String): List<CropCareLog> {
+        return supabase.queryList(
+            "crop_care_logs",
+            mapOf("crop_id" to "eq.$cropId", "order" to "created_at.desc"),
+            object : TypeToken<List<CropCareLog>>() {}
+        )
+    }
+
+    suspend fun addCropCareLog(cropId: String, type: String, action: String, note: String): Boolean {
+        return supabase.insert("crop_care_logs", mapOf(
+            "crop_id" to cropId,
+            "type" to type,
+            "action" to action,
+            "note" to note
+        ))
+    }
+
+    suspend fun deleteCropCareLog(logId: String): Boolean {
+        return supabase.delete("crop_care_logs", "id", logId)
+    }
+
+    suspend fun getOperationLogs(limit: Int = 40): List<OperationLog> {
+        return supabase.queryList(
+            "inventory_logs",
+            mapOf("order" to "created_at.desc", "limit" to limit.toString()),
+            object : TypeToken<List<OperationLog>>() {}
+        )
+    }
+
+    suspend fun recordOperationLog(actionType: String, itemName: String, quantity: Double, unit: String?, penId: String?, note: String): Boolean {
+        return supabase.insert("inventory_logs", mapOf(
+            "action_type" to actionType,
+            "item_name" to itemName,
+            "quantity" to quantity,
+            "unit" to (unit ?: ""),
+            "pen_id" to (penId ?: ""),
+            "note" to note
+        ))
+    }
+
+    suspend fun enrollStaffFace(
+        staffId: String,
+        name: String,
+        role: String,
+        penId: String,
+        thangBytes: ByteArray,
+        traiBytes: ByteArray? = null,
+        phaiBytes: ByteArray? = null
+    ): Boolean {
+        val cleanId = staffId.trim().uppercase()
+        supabase.upsert("staff", "id", mapOf(
+            "id" to cleanId,
+            "name" to name.trim(),
+            "role" to role.trim(),
+            "pen_id" to penId.ifBlank { "123" }
+        ))
+        return try {
+            val idBody = cleanId.toRequestBody("text/plain".toMediaTypeOrNull())
+            val nameBody = name.trim().toRequestBody("text/plain".toMediaTypeOrNull())
+            val p1 = MultipartBody.Part.createFormData("file_thang", "thang.jpg", thangBytes.toRequestBody("image/jpeg".toMediaTypeOrNull()))
+            val p2 = traiBytes?.let { MultipartBody.Part.createFormData("file_nghieng_trai", "trai.jpg", it.toRequestBody("image/jpeg".toMediaTypeOrNull())) }
+            val p3 = phaiBytes?.let { MultipartBody.Part.createFormData("file_nghieng_phai", "phai.jpg", it.toRequestBody("image/jpeg".toMediaTypeOrNull())) }
+            val res = faceApi.enrollFace(idBody, nameBody, p1, p2, p3)
             res.isSuccessful
         } catch (e: Exception) {
             e.printStackTrace()

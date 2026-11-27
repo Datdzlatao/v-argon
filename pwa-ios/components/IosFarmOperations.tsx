@@ -44,18 +44,26 @@ export default function IosFarmOperations({
   const [newSub, setNewSub] = useState('');
   const [newQtyOrWeight, setNewQtyOrWeight] = useState('');
 
-  // Quick action modal-like inline state
+  // Search & filter
+  const [searchQuery, setSearchQuery] = useState('');
+  const [statusFilter, setStatusFilter] = useState<'all' | 'ready' | 'attention' | 'healthy'>('all');
+
+  // Quick action modal-like inline state + existing logs
   const [activeLogTarget, setActiveLogTarget] = useState<{
     kind: 'weight' | 'health' | 'transfer' | 'growth' | 'care';
     id: string;
     label: string;
   } | null>(null);
+  const [existingLogs, setExistingLogs] = useState<any[]>([]);
   const [logInput1, setLogInput1] = useState('');
   const [logInput2, setLogInput2] = useState('');
 
   // Inventory
   const [inventory, setInventory] = useState<any[]>([]);
   const [invLogs, setInvLogs] = useState<any[]>([]);
+  const [invSearch, setInvSearch] = useState('');
+  const [invCatFilter, setInvCatFilter] = useState('All');
+  const [logActionFilter, setLogActionFilter] = useState('ALL');
   const [invFormMode, setInvFormMode] = useState<'none' | 'import' | 'export'>('none');
   const [invCat, setInvCat] = useState('Feed');
   const [invName, setInvName] = useState('');
@@ -220,6 +228,79 @@ export default function IosFarmOperations({
     onRefreshParent?.();
   };
 
+  const openLogPanel = async (kind: 'weight' | 'health' | 'transfer' | 'growth' | 'care', id: string, label: string, defaultInput = '') => {
+    setActiveLogTarget({ kind, id, label });
+    setLogInput1(defaultInput);
+    setLogInput2('');
+    setExistingLogs([]);
+    const tableMap: Record<string, { table: string; col: string }> = {
+      weight: { table: 'weight_logs', col: 'animal_id' },
+      health: { table: 'health_logs', col: 'animal_id' },
+      growth: { table: 'crop_growth_logs', col: 'crop_id' },
+      care: { table: 'crop_care_logs', col: 'crop_id' },
+    };
+    const cfg = tableMap[kind];
+    if (cfg) {
+      const { data } = await supabase.from(cfg.table).select('*').eq(cfg.col, id).order('created_at', { ascending: false }).limit(10);
+      setExistingLogs(data || []);
+    }
+  };
+
+  const handleDeleteLogItem = async (logId: any) => {
+    if (!activeLogTarget || !logId) return;
+    const tableMap: Record<string, string> = {
+      weight: 'weight_logs',
+      health: 'health_logs',
+      growth: 'crop_growth_logs',
+      care: 'crop_care_logs',
+    };
+    const tbl = tableMap[activeLogTarget.kind];
+    if (!tbl) return;
+    await supabase.from(tbl).delete().eq('id', logId);
+    setExistingLogs((prev) => prev.filter((l) => String(l.id) !== String(logId)));
+  };
+
+  const handleHarvestAnimal = async (a: any) => {
+    if (!confirm(`XÁC NHẬN XUẤT CHUỒNG: ${a.id} (${a.species}, ${a.weight ?? 0} kg)?`)) return;
+    await supabase.from('animals').delete().eq('id', a.id);
+    await supabase.from('inventory_logs').insert([{
+      action_type: 'ANIMAL_EXPORT',
+      item_name: `${a.id} (${a.species})`,
+      quantity: Number(a.weight || 0),
+      unit: 'kg',
+      pen_id: penId || null,
+      note: `Xuất chuồng cá thể ${a.id} (${a.weight || 0} kg)`,
+    }]);
+    await loadData();
+    onRefreshParent?.();
+  };
+
+  const handleHarvestCrop = async (c: any) => {
+    if (!confirm(`XÁC NHẬN THU HOẠCH: ${c.name} (${c.quantity ?? 0} cây)?`)) return;
+    await supabase.from('crops').delete().eq('id', c.id);
+    await supabase.from('inventory_logs').insert([{
+      action_type: 'CROP_HARVEST',
+      item_name: `${c.name}`,
+      quantity: Number(c.quantity || 0),
+      unit: 'cây',
+      pen_id: penId || null,
+      note: `Thu hoạch vụ mùa ${c.name} (${c.quantity || 0} cây)`,
+    }]);
+    await loadData();
+    onRefreshParent?.();
+  };
+
+  const exportCsv = (filename: string, headers: string[], rows: any[][]) => {
+    const csv = [headers.join(','), ...rows.map((r) => r.map((c) => `"${String(c ?? '').replace(/"/g, '""')}"`).join(','))].join('\n');
+    const blob = new Blob(['\uFEFF' + csv], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `${filename}.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
   const handleImportInventory = async (e: React.FormEvent) => {
     e.preventDefault();
     const qty = Number(invQty);
@@ -328,6 +409,27 @@ export default function IosFarmOperations({
             </div>
           </div>
 
+          {/* Search & Status Filter */}
+          <div className="flex gap-2">
+            <input
+              type="text"
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              placeholder={isCultivation ? 'Tìm cây trồng...' : 'Tìm mã thẻ / loài...'}
+              className="flex-1 px-3 py-1.5 rounded-xl bg-white border border-black/5 text-[12px] outline-none"
+            />
+            <select
+              value={statusFilter}
+              onChange={(e) => setStatusFilter(e.target.value as any)}
+              className="px-2.5 py-1.5 rounded-xl bg-white border border-black/5 text-[12px] outline-none"
+            >
+              <option value="all">Tất cả</option>
+              <option value="healthy">Khỏe mạnh</option>
+              <option value="attention">Cần chú ý</option>
+              <option value="ready">Đạt chuẩn</option>
+            </select>
+          </div>
+
           {showAddForm && (
             <form onSubmit={handleAddAnimalOrCrop} className="bg-white rounded-2xl p-3 border border-black/5 space-y-2">
               <input
@@ -416,11 +518,38 @@ export default function IosFarmOperations({
               <button type="submit" className="w-full py-2 rounded-xl bg-emerald-600 text-white text-[12px] font-bold">
                 Xác nhận
               </button>
+              {existingLogs.length > 0 && (
+                <div className="pt-2 border-t border-emerald-200 space-y-1 max-h-36 overflow-y-auto">
+                  <span className="text-[11px] font-bold text-emerald-900 block">Lịch sử đã ghi ({existingLogs.length}):</span>
+                  {existingLogs.map((l, i) => (
+                    <div key={l.id || i} className="flex items-center justify-between text-[11px] bg-white px-2.5 py-1.5 rounded-lg">
+                      <span className="truncate">
+                        {l.weight ? `${l.weight} kg` : l.height_or_size ? `${l.height_or_size} cm` : `${l.title || l.action || l.type || ''} ${l.note ? `• ${l.note}` : ''}`}
+                      </span>
+                      {l.id && (
+                        <button type="button" onClick={() => handleDeleteLogItem(l.id)} className="text-rose-500 ml-2 shrink-0">
+                          <Trash2 className="w-3 h-3" />
+                        </button>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              )}
             </form>
           )}
 
           <div className="space-y-2">
-            {!isCultivation && animals.map((a) => (
+            {!isCultivation && animals
+              .filter((a) => {
+                const q = searchQuery.trim().toLowerCase();
+                const matchQ = !q || String(a.id).toLowerCase().includes(q) || String(a.species).toLowerCase().includes(q);
+                const st = String(a.status || 'Healthy').toLowerCase();
+                if (statusFilter === 'attention') return matchQ && (st === 'sick' || st === 'anorexic');
+                if (statusFilter === 'ready') return matchQ && Number(a.weight || 0) >= Number(a.target_weight || 9999);
+                if (statusFilter === 'healthy') return matchQ && st !== 'sick';
+                return matchQ;
+              })
+              .map((a) => (
               <div key={a.id} className="bg-white rounded-2xl p-3 shadow-sm border border-black/5 space-y-2">
                 <div className="flex items-start justify-between gap-2">
                   <div>
@@ -434,14 +563,17 @@ export default function IosFarmOperations({
                   </span>
                 </div>
                 <div className="flex flex-wrap gap-1.5">
-                  <button type="button" onClick={() => { setActiveLogTarget({ kind: 'weight', id: a.id, label: a.id }); setLogInput1(String(a.weight || '')); }} className="inline-flex items-center gap-1 px-2 py-1 rounded-lg bg-slate-100 text-[11px] font-semibold">
+                  <button type="button" onClick={() => openLogPanel('weight', a.id, a.id, String(a.weight || ''))} className="inline-flex items-center gap-1 px-2 py-1 rounded-lg bg-slate-100 text-[11px] font-semibold">
                     <Scale className="w-3 h-3" /> Cân
                   </button>
-                  <button type="button" onClick={() => { setActiveLogTarget({ kind: 'health', id: a.id, label: a.id }); setLogInput1(a.status || 'Healthy'); }} className="inline-flex items-center gap-1 px-2 py-1 rounded-lg bg-slate-100 text-[11px] font-semibold">
+                  <button type="button" onClick={() => openLogPanel('health', a.id, a.id, a.status || 'Healthy')} className="inline-flex items-center gap-1 px-2 py-1 rounded-lg bg-slate-100 text-[11px] font-semibold">
                     <HeartPulse className="w-3 h-3" /> Sức khỏe
                   </button>
-                  <button type="button" onClick={() => { setActiveLogTarget({ kind: 'transfer', id: a.id, label: a.id }); setLogInput1(''); }} className="inline-flex items-center gap-1 px-2 py-1 rounded-lg bg-slate-100 text-[11px] font-semibold">
-                    <ArrowRightLeft className="w-3 h-3" /> Chuyển chuồng
+                  <button type="button" onClick={() => openLogPanel('transfer', a.id, a.id, '')} className="inline-flex items-center gap-1 px-2 py-1 rounded-lg bg-slate-100 text-[11px] font-semibold">
+                    <ArrowRightLeft className="w-3 h-3" /> Chuyển
+                  </button>
+                  <button type="button" onClick={() => handleHarvestAnimal(a)} className="inline-flex items-center gap-1 px-2 py-1 rounded-lg bg-emerald-50 text-emerald-700 text-[11px] font-bold">
+                    Xuất chuồng
                   </button>
                   <button type="button" onClick={() => handleDeleteAnimal(a.id)} className="inline-flex items-center gap-1 px-2 py-1 rounded-lg bg-rose-50 text-rose-600 text-[11px] font-semibold ml-auto">
                     <Trash2 className="w-3 h-3" />
@@ -450,7 +582,12 @@ export default function IosFarmOperations({
               </div>
             ))}
 
-            {isCultivation && crops.map((c) => (
+            {isCultivation && crops
+              .filter((c) => {
+                const q = searchQuery.trim().toLowerCase();
+                return !q || String(c.name).toLowerCase().includes(q) || String(c.variety || '').toLowerCase().includes(q);
+              })
+              .map((c) => (
               <div key={c.id} className="bg-white rounded-2xl p-3 shadow-sm border border-black/5 space-y-2">
                 <div className="flex items-start justify-between gap-2">
                   <div>
@@ -462,11 +599,14 @@ export default function IosFarmOperations({
                   </span>
                 </div>
                 <div className="flex flex-wrap gap-1.5">
-                  <button type="button" onClick={() => { setActiveLogTarget({ kind: 'growth', id: String(c.id), label: c.name }); setLogInput1(''); }} className="inline-flex items-center gap-1 px-2 py-1 rounded-lg bg-slate-100 text-[11px] font-semibold">
+                  <button type="button" onClick={() => openLogPanel('growth', String(c.id), c.name, '')} className="inline-flex items-center gap-1 px-2 py-1 rounded-lg bg-slate-100 text-[11px] font-semibold">
                     <Sprout className="w-3 h-3" /> Sinh trưởng
                   </button>
-                  <button type="button" onClick={() => { setActiveLogTarget({ kind: 'care', id: String(c.id), label: c.name }); setLogInput1('Tưới nước'); }} className="inline-flex items-center gap-1 px-2 py-1 rounded-lg bg-slate-100 text-[11px] font-semibold">
+                  <button type="button" onClick={() => openLogPanel('care', String(c.id), c.name, 'Tưới nước')} className="inline-flex items-center gap-1 px-2 py-1 rounded-lg bg-slate-100 text-[11px] font-semibold">
                     <Droplets className="w-3 h-3" /> Chăm sóc
+                  </button>
+                  <button type="button" onClick={() => handleHarvestCrop(c)} className="inline-flex items-center gap-1 px-2 py-1 rounded-lg bg-emerald-50 text-emerald-700 text-[11px] font-bold">
+                    Thu hoạch
                   </button>
                   <button type="button" onClick={() => handleDeleteCrop(String(c.id))} className="inline-flex items-center gap-1 px-2 py-1 rounded-lg bg-rose-50 text-rose-600 text-[11px] font-semibold ml-auto">
                     <Trash2 className="w-3 h-3" />
@@ -534,13 +674,52 @@ export default function IosFarmOperations({
             </form>
           )}
 
+          <div className="flex gap-2">
+            <input
+              type="text"
+              value={invSearch}
+              onChange={(e) => setInvSearch(e.target.value)}
+              placeholder="Tìm tên vật tư..."
+              className="flex-1 px-3 py-1.5 rounded-xl bg-white border border-black/5 text-[12px] outline-none"
+            />
+            <select
+              value={invCatFilter}
+              onChange={(e) => setInvCatFilter(e.target.value)}
+              className="px-2.5 py-1.5 rounded-xl bg-white border border-black/5 text-[12px] outline-none"
+            >
+              <option value="All">Tất cả</option>
+              <option value="Feed">Thức ăn</option>
+              <option value="Fertilizer">Phân bón</option>
+              <option value="Medicine">Thuốc / Khác</option>
+            </select>
+          </div>
+
           <div className="bg-white rounded-2xl p-3 shadow-sm border border-black/5 space-y-2">
             <div className="flex items-center justify-between">
               <span className="text-[12px] font-bold text-slate-900 flex items-center gap-1.5">
                 <Package className="w-4 h-4 text-emerald-600" /> Tồn kho ({inventory.length})
               </span>
+              <button
+                type="button"
+                onClick={() =>
+                  exportCsv(
+                    'ton-kho-vargon',
+                    ['Tên vật tư', 'Danh mục', 'Số lượng', 'Đơn vị', 'Đơn giá'],
+                    inventory.map((i) => [i.name, i.category, i.quantity, i.unit, i.unit_price || 0])
+                  )
+                }
+                className="text-[11px] font-bold text-emerald-700"
+              >
+                Xuất CSV
+              </button>
             </div>
-            {inventory.map((item) => {
+            {inventory
+              .filter((item) => {
+                const matchSearch = !invSearch.trim() || String(item.name).toLowerCase().includes(invSearch.trim().toLowerCase());
+                const matchCat = invCatFilter === 'All' || String(item.category).toLowerCase() === invCatFilter.toLowerCase();
+                return matchSearch && matchCat;
+              })
+              .map((item) => {
               const low = Number(item.quantity || 0) <= 5;
               return (
                 <div key={item.id} className="p-2.5 rounded-xl bg-slate-50 flex items-center justify-between text-[12px]">
@@ -562,12 +741,43 @@ export default function IosFarmOperations({
           </div>
 
           {invLogs.length > 0 && (
-            <div className="bg-white rounded-2xl p-3 shadow-sm border border-black/5 space-y-1.5">
-              <span className="text-[12px] font-bold text-slate-900 block">Nhật ký kho gần đây</span>
-              {invLogs.slice(0, 6).map((l, idx) => (
+            <div className="bg-white rounded-2xl p-3 shadow-sm border border-black/5 space-y-2">
+              <div className="flex items-center justify-between gap-2">
+                <span className="text-[12px] font-bold text-slate-900">Nhật ký kho ({invLogs.length})</span>
+                <div className="flex items-center gap-2">
+                  <select
+                    value={logActionFilter}
+                    onChange={(e) => setLogActionFilter(e.target.value)}
+                    className="px-2 py-1 rounded-lg bg-slate-100 text-[11px]"
+                  >
+                    <option value="ALL">Tất cả</option>
+                    <option value="IMPORT">Nhập kho</option>
+                    <option value="EXPORT">Xuất kho</option>
+                    <option value="ANIMAL_EXPORT">Xuất chuồng</option>
+                    <option value="CROP_HARVEST">Thu hoạch</option>
+                  </select>
+                  <button
+                    type="button"
+                    onClick={() =>
+                      exportCsv(
+                        'nhat-ky-kho-vargon',
+                        ['Loại', 'Tên', 'Số lượng', 'Ghi chú'],
+                        invLogs.map((l) => [l.action_type, l.item_name, l.quantity, l.note || ''])
+                      )
+                    }
+                    className="text-[11px] font-bold text-emerald-700"
+                  >
+                    CSV
+                  </button>
+                </div>
+              </div>
+              {invLogs
+                .filter((l) => logActionFilter === 'ALL' || l.action_type === logActionFilter)
+                .slice(0, 12)
+                .map((l, idx) => (
                 <div key={l.id || idx} className="text-[11px] text-slate-600 flex justify-between border-b border-slate-100 pb-1 last:border-0">
-                  <span>{l.action_type === 'IMPORT' ? '📥' : '📤'} {l.item_name} ({l.quantity} {l.unit})</span>
-                  <span className="text-slate-400">{l.note || ''}</span>
+                  <span>{l.action_type === 'IMPORT' ? '📥' : '📤'} {l.item_name} ({l.quantity} {l.unit || ''})</span>
+                  <span className="text-slate-400 truncate max-w-[140px]">{l.note || ''}</span>
                 </div>
               ))}
             </div>

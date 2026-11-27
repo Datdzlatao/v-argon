@@ -46,8 +46,8 @@
 27-->/home/dat/n-ng-c-p/android/app/src/main/AndroidManifest.xml:12:5-33:19
 28        android:name="com.smartfarm.app.SmartFarmApplication"
 28-->/home/dat/n-ng-c-p/android/app/src/main/AndroidManifest.xml:13:9-45
-29        android:allowBackup="true"
-29-->/home/dat/n-ng-c-p/android/app/src/main/AndroidManifest.xml:14:9-35
+29        android:allowBackup="false"
+29-->/home/dat/n-ng-c-p/android/app/src/main/AndroidManifest.xml:14:9-36
 30        android:appComponentFactory="androidx.core.app.CoreComponentFactory"
 30-->[androidx.core:core:1.13.1] /home/dat/.gradle/caches/transforms-4/248a52d80cb1f06f480533f892a0dd7f/transformed/core-1.13.1/AndroidManifest.xml:28:18-86
 31        android:debuggable="true"

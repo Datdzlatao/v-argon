@@ -86,22 +86,22 @@ data class Crop(
 }
 
 data class CropGrowthLog(
-    val id: String,
-    val cropId: String,
-    val date: String,
-    val stage: String,
-    val heightCm: Double,
-    val notes: String? = null
+    val id: String? = null,
+    @SerializedName("crop_id") val cropId: String = "",
+    @SerializedName("created_at") val date: String? = null,
+    val stage: String? = null,
+    @SerializedName("height_or_size") val heightCm: Double = 0.0,
+    @SerializedName("note") val notes: String? = null
 )
 
 data class CropCareLog(
-    val id: String,
-    val cropId: String,
-    val date: String,
-    val careType: String, // "Tưới nước", "Bón phân", "Phun thuốc"
-    val materialName: String? = null,
+    val id: String? = null,
+    @SerializedName("crop_id") val cropId: String = "",
+    @SerializedName("created_at") val date: String? = null,
+    @SerializedName("type") val careType: String = "Chăm sóc",
+    @SerializedName("action") val materialName: String? = null,
     val amount: String? = null,
-    val notes: String? = null
+    @SerializedName("note") val notes: String? = null
 )
 
 data class InventoryItem(
@@ -335,4 +335,31 @@ data class MaskTelemetry(
     @SerializedName("has_mask") val hasMask: Boolean = false,
     @SerializedName("mask_color") val maskColor: String = "none",
     @SerializedName("confidence") val confidence: Double = 0.0
+)
+
+data class HealthLog(
+    val id: String? = null,
+    @SerializedName("animal_id") val animalId: String = "",
+    val type: String = "Khám bệnh",
+    val title: String = "",
+    val note: String? = null,
+    @SerializedName("created_at") val createdAt: String? = null
+)
+
+data class WeightLog(
+    val id: String? = null,
+    @SerializedName("animal_id") val animalId: String = "",
+    val weight: Double = 0.0,
+    @SerializedName("created_at") val createdAt: String? = null
+)
+
+data class OperationLog(
+    val id: String? = null,
+    @SerializedName("action_type") val actionType: String = "IMPORT",
+    @SerializedName("item_name") val itemName: String = "",
+    val quantity: Double = 0.0,
+    val unit: String? = null,
+    @SerializedName("pen_id") val penId: String? = null,
+    val note: String? = null,
+    @SerializedName("created_at") val createdAt: String? = null
 )

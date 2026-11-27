@@ -54,6 +54,18 @@ fun LivestockCropsScreen(
     var selectedAnimalForTransfer by remember { mutableStateOf<Animal?>(null) }
     var showTransferDialog by remember { mutableStateOf(false) }
 
+    var activeHealthAnimal by remember { mutableStateOf<Animal?>(null) }
+    var activeWeightAnimal by remember { mutableStateOf<Animal?>(null) }
+    var activeGrowthCrop by remember { mutableStateOf<Crop?>(null) }
+    var activeCareCrop by remember { mutableStateOf<Crop?>(null) }
+    var harvestTargetAnimal by remember { mutableStateOf<Animal?>(null) }
+    var harvestTargetCrop by remember { mutableStateOf<Crop?>(null) }
+
+    val healthLogs by viewModel.healthLogs.collectAsState()
+    val weightLogs by viewModel.weightLogs.collectAsState()
+    val cropGrowthLogs by viewModel.cropGrowthLogs.collectAsState()
+    val cropCareLogs by viewModel.cropCareLogs.collectAsState()
+
     val isLivestock = currentMode == "livestock"
 
     Column(
@@ -218,7 +230,16 @@ fun LivestockCropsScreen(
                             onTransferClick = {
                                 selectedAnimalForTransfer = animal
                                 showTransferDialog = true
-                            }
+                            },
+                            onHealthClick = {
+                                viewModel.loadHealthLogs(animal.id)
+                                activeHealthAnimal = animal
+                            },
+                            onWeightClick = {
+                                viewModel.loadWeightLogs(animal.id)
+                                activeWeightAnimal = animal
+                            },
+                            onHarvestClick = { harvestTargetAnimal = animal }
                         )
                     }
                 }
@@ -256,7 +277,16 @@ fun LivestockCropsScreen(
                     items(filteredCrops, key = { it.displayId }) { crop ->
                         CropItemCard(
                             crop = crop,
-                            onDelete = { viewModel.deleteCrop(crop.displayId) }
+                            onDelete = { viewModel.deleteCrop(crop.displayId) },
+                            onGrowthClick = {
+                                viewModel.loadCropGrowthLogs(crop.displayId)
+                                activeGrowthCrop = crop
+                            },
+                            onCareClick = {
+                                viewModel.loadCropCareLogs(crop.displayId)
+                                activeCareCrop = crop
+                            },
+                            onHarvestClick = { harvestTargetCrop = crop }
                         )
                     }
                 }
@@ -299,6 +329,166 @@ fun LivestockCropsScreen(
             }
         )
     }
+
+    // Xác nhận xuất chuồng
+    if (harvestTargetAnimal != null) {
+        val ani = harvestTargetAnimal!!
+        AlertDialog(
+            onDismissRequest = { harvestTargetAnimal = null },
+            title = { Text("Xác Nhận Xuất Chuồng", fontWeight = FontWeight.Bold) },
+            text = { Text("Xuất bán cá thể ${ani.id} (${ani.species}, ${ani.weight} kg)?") },
+            confirmButton = {
+                Button(onClick = { viewModel.harvestAnimal(ani); harvestTargetAnimal = null }, colors = ButtonDefaults.buttonColors(containerColor = FarmPrimary)) {
+                    Text("Xuất Chuồng")
+                }
+            },
+            dismissButton = { TextButton(onClick = { harvestTargetAnimal = null }) { Text("Hủy") } }
+        )
+    }
+
+    // Xác nhận thu hoạch
+    if (harvestTargetCrop != null) {
+        val crp = harvestTargetCrop!!
+        AlertDialog(
+            onDismissRequest = { harvestTargetCrop = null },
+            title = { Text("Xác Nhận Thu Hoạch", fontWeight = FontWeight.Bold) },
+            text = { Text("Thu hoạch vụ mùa ${crp.name} (${crp.quantity} gốc)?") },
+            confirmButton = {
+                Button(onClick = { viewModel.harvestCrop(crp); harvestTargetCrop = null }, colors = ButtonDefaults.buttonColors(containerColor = FarmPrimary)) {
+                    Text("Thu Hoạch")
+                }
+            },
+            dismissButton = { TextButton(onClick = { harvestTargetCrop = null }) { Text("Hủy") } }
+        )
+    }
+
+    // Nhật ký sức khỏe vật nuôi
+    if (activeHealthAnimal != null) {
+        val ani = activeHealthAnimal!!
+        var title by remember { mutableStateOf("") }
+        var note by remember { mutableStateOf("") }
+        AlertDialog(
+            onDismissRequest = { activeHealthAnimal = null },
+            title = { Text("Thú Y & Sức Khỏe: ${ani.id}", fontWeight = FontWeight.Bold, fontSize = 15.sp) },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    OutlinedTextField(value = title, onValueChange = { title = it }, label = { Text("Tình trạng / Tiêm phòng") }, singleLine = true)
+                    OutlinedTextField(value = note, onValueChange = { note = it }, label = { Text("Ghi chú thuốc / liều lượng") }, singleLine = true)
+                    Button(
+                        onClick = { if (title.isNotBlank()) { viewModel.addHealthLog(ani.id, "Khám", title, note); title = ""; note = "" } },
+                        colors = ButtonDefaults.buttonColors(containerColor = FarmPrimary),
+                        modifier = Modifier.fillMaxWidth()
+                    ) { Text("+ Thêm Nhật Ký") }
+                    healthLogs.take(6).forEach { log ->
+                        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                            Text("${log.title} ${log.note?.let { "• $it" } ?: ""}", fontSize = 11.sp, modifier = Modifier.weight(1f))
+                            log.id?.let { id ->
+                                IconButton(onClick = { viewModel.deleteHealthLog(ani.id, id) }, modifier = Modifier.size(28.dp)) {
+                                    Icon(Icons.Default.Delete, contentDescription = null, tint = FarmDestructive, modifier = Modifier.size(15.dp))
+                                }
+                            }
+                        }
+                    }
+                }
+            },
+            confirmButton = { TextButton(onClick = { activeHealthAnimal = null }) { Text("Đóng") } }
+        )
+    }
+
+    // Theo dõi cân nặng vật nuôi
+    if (activeWeightAnimal != null) {
+        val ani = activeWeightAnimal!!
+        var weightStr by remember { mutableStateOf(ani.weight.toString()) }
+        AlertDialog(
+            onDismissRequest = { activeWeightAnimal = null },
+            title = { Text("Cân Nặng: ${ani.id}", fontWeight = FontWeight.Bold, fontSize = 15.sp) },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    OutlinedTextField(value = weightStr, onValueChange = { weightStr = it }, label = { Text("Cân nặng mới (kg)") }, singleLine = true)
+                    Button(
+                        onClick = { weightStr.toDoubleOrNull()?.let { viewModel.addWeightLog(ani.id, it) } },
+                        colors = ButtonDefaults.buttonColors(containerColor = FarmPrimary),
+                        modifier = Modifier.fillMaxWidth()
+                    ) { Text("Lưu Mốc Cân") }
+                    weightLogs.take(6).forEach { log ->
+                        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                            Text("${log.weight} kg", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                            log.id?.let { id ->
+                                IconButton(onClick = { viewModel.deleteWeightLog(ani.id, id) }, modifier = Modifier.size(28.dp)) {
+                                    Icon(Icons.Default.Delete, contentDescription = null, tint = FarmDestructive, modifier = Modifier.size(15.dp))
+                                }
+                            }
+                        }
+                    }
+                }
+            },
+            confirmButton = { TextButton(onClick = { activeWeightAnimal = null }) { Text("Đóng") } }
+        )
+    }
+
+    // Đo sinh trưởng cây trồng
+    if (activeGrowthCrop != null) {
+        val crp = activeGrowthCrop!!
+        var sizeStr by remember { mutableStateOf("") }
+        AlertDialog(
+            onDismissRequest = { activeGrowthCrop = null },
+            title = { Text("Sinh Trưởng: ${crp.name}", fontWeight = FontWeight.Bold, fontSize = 15.sp) },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    OutlinedTextField(value = sizeStr, onValueChange = { sizeStr = it }, label = { Text("Chiều cao / kích thước (cm)") }, singleLine = true)
+                    Button(
+                        onClick = { sizeStr.toDoubleOrNull()?.let { viewModel.addCropGrowthLog(crp.displayId, it); sizeStr = "" } },
+                        colors = ButtonDefaults.buttonColors(containerColor = FarmPrimary),
+                        modifier = Modifier.fillMaxWidth()
+                    ) { Text("+ Ghi Mốc Đo") }
+                    cropGrowthLogs.take(6).forEach { log ->
+                        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                            Text("${log.heightCm} cm", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                            log.id?.let { id ->
+                                IconButton(onClick = { viewModel.deleteCropGrowthLog(crp.displayId, id) }, modifier = Modifier.size(28.dp)) {
+                                    Icon(Icons.Default.Delete, contentDescription = null, tint = FarmDestructive, modifier = Modifier.size(15.dp))
+                                }
+                            }
+                        }
+                    }
+                }
+            },
+            confirmButton = { TextButton(onClick = { activeGrowthCrop = null }) { Text("Đóng") } }
+        )
+    }
+
+    // Nhật ký chăm sóc cây trồng
+    if (activeCareCrop != null) {
+        val crp = activeCareCrop!!
+        var action by remember { mutableStateOf("Tưới nước") }
+        var note by remember { mutableStateOf("") }
+        AlertDialog(
+            onDismissRequest = { activeCareCrop = null },
+            title = { Text("Chăm Sóc: ${crp.name}", fontWeight = FontWeight.Bold, fontSize = 15.sp) },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    OutlinedTextField(value = action, onValueChange = { action = it }, label = { Text("Thao tác (Tưới, Bón phân, Phun thuốc)") }, singleLine = true)
+                    OutlinedTextField(value = note, onValueChange = { note = it }, label = { Text("Ghi chú chi tiết") }, singleLine = true)
+                    Button(
+                        onClick = { if (action.isNotBlank()) { viewModel.addCropCareLog(crp.displayId, "Chăm sóc", action, note); note = "" } },
+                        colors = ButtonDefaults.buttonColors(containerColor = FarmPrimary),
+                        modifier = Modifier.fillMaxWidth()
+                    ) { Text("+ Ghi Nhật Ký") }
+                    cropCareLogs.take(6).forEach { log ->
+                        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                            Text("${log.materialName ?: log.careType} ${log.notes?.let { "• $it" } ?: ""}", fontSize = 11.sp, modifier = Modifier.weight(1f))
+                            log.id?.let { id ->
+                                IconButton(onClick = { viewModel.deleteCropCareLog(crp.displayId, id) }, modifier = Modifier.size(28.dp)) {
+                                    Icon(Icons.Default.Delete, contentDescription = null, tint = FarmDestructive, modifier = Modifier.size(15.dp))
+                                }
+                            }
+                        }
+                    }
+                }
+            },
+            confirmButton = { TextButton(onClick = { activeCareCrop = null }) { Text("Đóng") } }
+        )
+    }
 }
 
 @Composable
@@ -331,7 +521,10 @@ fun FilterChipItem(
 fun AnimalItemCard(
     animal: Animal,
     onDelete: () -> Unit,
-    onTransferClick: () -> Unit
+    onTransferClick: () -> Unit,
+    onHealthClick: () -> Unit = {},
+    onWeightClick: () -> Unit = {},
+    onHarvestClick: () -> Unit = {}
 ) {
     val progress = (animal.weight / animal.targetWeight.coerceAtLeast(1.0)).toFloat().coerceIn(0f, 1f)
     val speciesIcon = when {
@@ -449,6 +642,20 @@ fun AnimalItemCard(
                     .height(8.dp)
                     .clip(RoundedCornerShape(4.dp))
             )
+
+            Spacer(modifier = Modifier.height(10.dp))
+
+            Row(horizontalArrangement = Arrangement.spacedBy(6.dp), modifier = Modifier.fillMaxWidth()) {
+                OutlinedButton(onClick = onWeightClick, contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp), modifier = Modifier.weight(1f).height(32.dp)) {
+                    Text("Cân", fontSize = 11.sp)
+                }
+                OutlinedButton(onClick = onHealthClick, contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp), modifier = Modifier.weight(1f).height(32.dp)) {
+                    Text("Sức khỏe", fontSize = 11.sp)
+                }
+                Button(onClick = onHarvestClick, colors = ButtonDefaults.buttonColors(containerColor = FarmPrimary), contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp), modifier = Modifier.weight(1f).height(32.dp)) {
+                    Text("Xuất chuồng", fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                }
+            }
         }
     }
 }
@@ -456,7 +663,10 @@ fun AnimalItemCard(
 @Composable
 fun CropItemCard(
     crop: Crop,
-    onDelete: () -> Unit
+    onDelete: () -> Unit,
+    onGrowthClick: () -> Unit = {},
+    onCareClick: () -> Unit = {},
+    onHarvestClick: () -> Unit = {}
 ) {
     val cropIcon = when {
         crop.name.contains("dưa", ignoreCase = true) -> "🍈"
@@ -551,6 +761,20 @@ fun CropItemCard(
                         fontSize = 11.sp,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
+                }
+            }
+
+            Spacer(modifier = Modifier.height(10.dp))
+
+            Row(horizontalArrangement = Arrangement.spacedBy(6.dp), modifier = Modifier.fillMaxWidth()) {
+                OutlinedButton(onClick = onGrowthClick, contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp), modifier = Modifier.weight(1f).height(32.dp)) {
+                    Text("Sinh trưởng", fontSize = 11.sp)
+                }
+                OutlinedButton(onClick = onCareClick, contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp), modifier = Modifier.weight(1f).height(32.dp)) {
+                    Text("Chăm sóc", fontSize = 11.sp)
+                }
+                Button(onClick = onHarvestClick, colors = ButtonDefaults.buttonColors(containerColor = FarmPrimary), contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp), modifier = Modifier.weight(1f).height(32.dp)) {
+                    Text("Thu hoạch", fontSize = 11.sp, fontWeight = FontWeight.Bold)
                 }
             }
         }

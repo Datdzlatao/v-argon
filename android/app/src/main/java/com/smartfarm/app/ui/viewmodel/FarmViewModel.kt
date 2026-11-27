@@ -956,6 +956,153 @@ class FarmViewModel(
         showToast("Đã đăng xuất tài khoản.")
     }
 
+    private val _operationLogs = MutableStateFlow<List<OperationLog>>(emptyList())
+    val operationLogs: StateFlow<List<OperationLog>> = _operationLogs.asStateFlow()
+
+    private val _healthLogs = MutableStateFlow<List<HealthLog>>(emptyList())
+    val healthLogs: StateFlow<List<HealthLog>> = _healthLogs.asStateFlow()
+
+    private val _weightLogs = MutableStateFlow<List<WeightLog>>(emptyList())
+    val weightLogs: StateFlow<List<WeightLog>> = _weightLogs.asStateFlow()
+
+    private val _cropGrowthLogs = MutableStateFlow<List<CropGrowthLog>>(emptyList())
+    val cropGrowthLogs: StateFlow<List<CropGrowthLog>> = _cropGrowthLogs.asStateFlow()
+
+    private val _cropCareLogs = MutableStateFlow<List<CropCareLog>>(emptyList())
+    val cropCareLogs: StateFlow<List<CropCareLog>> = _cropCareLogs.asStateFlow()
+
+    fun loadOperationLogs() {
+        viewModelScope.launch {
+            _operationLogs.value = repository.getOperationLogs()
+        }
+    }
+
+    fun loadHealthLogs(animalId: String) {
+        viewModelScope.launch { _healthLogs.value = repository.getHealthLogs(animalId) }
+    }
+
+    fun addHealthLog(animalId: String, type: String, title: String, note: String) {
+        viewModelScope.launch {
+            repository.addHealthLog(animalId, type, title, note)
+            _healthLogs.value = repository.getHealthLogs(animalId)
+            showToast("Đã thêm nhật ký thú y")
+        }
+    }
+
+    fun deleteHealthLog(animalId: String, logId: String) {
+        viewModelScope.launch {
+            repository.deleteHealthLog(logId)
+            _healthLogs.value = repository.getHealthLogs(animalId)
+        }
+    }
+
+    fun loadWeightLogs(animalId: String) {
+        viewModelScope.launch { _weightLogs.value = repository.getWeightLogs(animalId) }
+    }
+
+    fun addWeightLog(animalId: String, weight: Double) {
+        viewModelScope.launch {
+            repository.addWeightLog(animalId, weight)
+            _weightLogs.value = repository.getWeightLogs(animalId)
+            _animals.value = repository.getAnimals(_currentPenId.value)
+            showToast("Đã cập nhật cân nặng: $weight kg")
+        }
+    }
+
+    fun deleteWeightLog(animalId: String, logId: String) {
+        viewModelScope.launch {
+            repository.deleteWeightLog(logId)
+            _weightLogs.value = repository.getWeightLogs(animalId)
+        }
+    }
+
+    fun loadCropGrowthLogs(cropId: String) {
+        viewModelScope.launch { _cropGrowthLogs.value = repository.getCropGrowthLogs(cropId) }
+    }
+
+    fun addCropGrowthLog(cropId: String, heightCm: Double) {
+        viewModelScope.launch {
+            repository.addCropGrowthLog(cropId, heightCm)
+            _cropGrowthLogs.value = repository.getCropGrowthLogs(cropId)
+            showToast("Đã ghi đo sinh trưởng: $heightCm cm")
+        }
+    }
+
+    fun deleteCropGrowthLog(cropId: String, logId: String) {
+        viewModelScope.launch {
+            repository.deleteCropGrowthLog(logId)
+            _cropGrowthLogs.value = repository.getCropGrowthLogs(cropId)
+        }
+    }
+
+    fun loadCropCareLogs(cropId: String) {
+        viewModelScope.launch { _cropCareLogs.value = repository.getCropCareLogs(cropId) }
+    }
+
+    fun addCropCareLog(cropId: String, type: String, action: String, note: String) {
+        viewModelScope.launch {
+            repository.addCropCareLog(cropId, type, action, note)
+            _cropCareLogs.value = repository.getCropCareLogs(cropId)
+            showToast("Đã ghi nhật ký chăm sóc cây")
+        }
+    }
+
+    fun deleteCropCareLog(cropId: String, logId: String) {
+        viewModelScope.launch {
+            repository.deleteCropCareLog(logId)
+            _cropCareLogs.value = repository.getCropCareLogs(cropId)
+        }
+    }
+
+    fun harvestAnimal(animal: Animal) {
+        viewModelScope.launch {
+            repository.deleteAnimal(animal.id)
+            repository.recordOperationLog(
+                "ANIMAL_EXPORT",
+                "${animal.id} (${animal.species})",
+                animal.weight,
+                "kg",
+                _currentPenId.value,
+                "Xuất chuồng cá thể ${animal.id} (${animal.weight} kg)"
+            )
+            _animals.value = repository.getAnimals(_currentPenId.value)
+            loadOperationLogs()
+            showToast("🎉 Đã xuất chuồng cá thể ${animal.id}")
+        }
+    }
+
+    fun harvestCrop(crop: Crop) {
+        viewModelScope.launch {
+            repository.deleteCrop(crop.displayId)
+            repository.recordOperationLog(
+                "CROP_HARVEST",
+                crop.name,
+                crop.quantity.toDouble(),
+                "cây",
+                _currentPenId.value,
+                "Thu hoạch vụ mùa ${crop.name} (${crop.quantity} cây)"
+            )
+            _crops.value = repository.getCrops(_currentPenId.value)
+            loadOperationLogs()
+            showToast("🎉 Đã thu hoạch vụ mùa ${crop.name}")
+        }
+    }
+
+    fun enrollStaffFace(
+        staffId: String,
+        name: String,
+        role: String,
+        thangBytes: ByteArray,
+        traiBytes: ByteArray? = null,
+        phaiBytes: ByteArray? = null
+    ) {
+        viewModelScope.launch {
+            val ok = repository.enrollStaffFace(staffId, name, role, _currentPenId.value, thangBytes, traiBytes, phaiBytes)
+            loadStaff()
+            showToast(if (ok) "✅ Đã đăng ký khuôn mặt cho $name" else "⚠️ Đã lưu nhân sự, lỗi trích xuất khuôn mặt")
+        }
+    }
+
     override fun onCleared() {
         super.onCleared()
         repository.webSocketManager.disconnect()

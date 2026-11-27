@@ -506,13 +506,19 @@ fun ExtendedModulesScreen(onBack: () -> Unit) {
                                     Text(l.reason, fontSize = 12.sp, color = FarmTextMutedLight)
                                 }
                                 if (l.status == "pending" && l.id != null) {
-                                    Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                                    Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
                                         TextButton(onClick = {
                                             scope.launch {
                                                 supabase.update("farm_hr_leaves", "id", l.id.toString(), mapOf("status" to "approved"))
                                                 loadAll()
                                             }
-                                        }) { Text("Duyệt", color = FarmPrimary, fontWeight = FontWeight.Bold) }
+                                        }) { Text("Duyệt", color = FarmPrimary, fontWeight = FontWeight.Bold, fontSize = 12.sp) }
+                                        TextButton(onClick = {
+                                            scope.launch {
+                                                supabase.update("farm_hr_leaves", "id", l.id.toString(), mapOf("status" to "rejected"))
+                                                loadAll()
+                                            }
+                                        }) { Text("Từ chối", color = FarmDestructive, fontWeight = FontWeight.Bold, fontSize = 12.sp) }
                                     }
                                 } else {
                                     Text(
@@ -529,10 +535,21 @@ fun ExtendedModulesScreen(onBack: () -> Unit) {
                         Card(colors = CardDefaults.cardColors(containerColor = Color(0xFFF0F9FF))) {
                             Row(
                                 modifier = Modifier.fillMaxWidth().padding(12.dp),
-                                horizontalArrangement = Arrangement.SpaceBetween
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
                             ) {
-                                Text("Khoán: ${q.staffName} • ${q.taskName}", fontWeight = FontWeight.Bold, fontSize = 12.sp)
-                                Text("${q.completed.toInt()}/${q.target.toInt()} ${q.unit}", color = FarmPrimary, fontWeight = FontWeight.Bold, fontSize = 12.sp)
+                                Text("Khoán: ${q.staffName} • ${q.taskName}", fontWeight = FontWeight.Bold, fontSize = 12.sp, modifier = Modifier.weight(1f))
+                                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                                    Text("${q.completed.toInt()}/${q.target.toInt()} ${q.unit}", color = FarmPrimary, fontWeight = FontWeight.Bold, fontSize = 12.sp)
+                                    if (q.id != null) {
+                                        TextButton(onClick = {
+                                            scope.launch {
+                                                supabase.update("farm_hr_quotas", "id", q.id.toString(), mapOf("completed" to (q.completed + 1)))
+                                                loadAll()
+                                            }
+                                        }) { Text("+1", fontWeight = FontWeight.Bold, color = FarmPrimary) }
+                                    }
+                                }
                             }
                         }
                     }

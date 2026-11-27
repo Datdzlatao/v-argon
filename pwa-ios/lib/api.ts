@@ -53,10 +53,12 @@ export interface PenItem {
   webcam_url?: string;
 }
 
-export async function fetchDashboardState(penId?: string): Promise<any> {
-  const url = penId
-    ? `${BACKEND_URL}/api/dashboard?pen_id=${encodeURIComponent(penId)}`
-    : `${BACKEND_URL}/api/dashboard`;
+export async function fetchDashboardState(penId?: string, userId?: string): Promise<any> {
+  const qs = new URLSearchParams();
+  if (penId) qs.set('pen_id', penId);
+  if (userId) qs.set('user_id', userId);
+  const query = qs.toString();
+  const url = `${BACKEND_URL}/api/dashboard${query ? `?${query}` : ''}`;
   const res = await fetch(url);
   if (!res.ok) throw new Error(`HTTP ${res.status}`);
   return res.json();
@@ -150,11 +152,11 @@ export async function getFaceCameraLatest(): Promise<any> {
   }
 }
 
-export async function sendAgentChat(message: string, penId?: string): Promise<any> {
+export async function sendAgentChat(message: string, penId?: string, userId: string = 'ios_pwa_user'): Promise<any> {
   const res = await fetch(`${BACKEND_URL}/api/chat`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ message, pen_id: penId, user_id: 'ios_pwa_user' }),
+    body: JSON.stringify({ message, pen_id: penId, user_id: userId }),
   });
   if (!res.ok) throw new Error(`Chat error ${res.status}`);
   return res.json();
@@ -167,16 +169,17 @@ export async function sendAgentChatStream(
     onStatus?: (text: string) => void;
     onChunk: (delta: string) => void;
     onDone?: (fullReply: string, toolCalls: any[]) => void;
-  }
+  },
+  userId: string = 'ios_pwa_user'
 ): Promise<void> {
   const res = await fetch(`${BACKEND_URL}/api/chat/stream`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ message, pen_id: penId, user_id: 'ios_pwa_user' }),
+    body: JSON.stringify({ message, pen_id: penId, user_id: userId }),
   });
 
   if (!res.ok || !res.body) {
-    const fallback = await sendAgentChat(message, penId);
+    const fallback = await sendAgentChat(message, penId, userId);
     callbacks.onChunk(fallback.reply || 'Đã xử lý.');
     callbacks.onDone?.(fallback.reply || '', fallback.tool_calls || []);
     return;
@@ -377,5 +380,114 @@ export async function executeNewsfeedQuickApi(
     body: JSON.stringify(body),
   });
   if (!res.ok) throw new Error(`Quick action error ${res.status}`);
+  return res.json();
+}
+
+export async function triggerDailyBriefing(): Promise<any> {
+  const res = await fetch(`${BACKEND_URL}/api/briefing/daily`, { method: 'POST' });
+  if (!res.ok) throw new Error(`Briefing error ${res.status}`);
+  return res.json();
+}
+
+export async function updatePenMetadataAPI(
+  penId: string,
+  updates: { name?: string; type?: string; camera_url?: string; webcam_url?: string }
+): Promise<any> {
+  const res = await fetch(`${BACKEND_URL}/api/pens/${encodeURIComponent(penId)}`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(updates),
+  });
+  if (!res.ok) throw new Error(`Pen update error ${res.status}`);
+  return res.json();
+}
+
+export async function getStaffList(): Promise<any[]> {
+  try {
+    const res = await fetch(`${BACKEND_URL}/api/staff`, { cache: 'no-store' });
+    if (res.ok) return await res.json();
+  } catch {}
+  return [];
+}
+
+export async function getStaffAttendanceHistory(limit = 30): Promise<any[]> {
+  try {
+    const res = await fetch(`${BACKEND_URL}/api/staff/attendance?limit=${limit}`, { cache: 'no-store' });
+    if (res.ok) return await res.json();
+  } catch {}
+  return [];
+}
+
+export async function checkInStaff(payload: {
+  staffId: string;
+  staffName: string;
+  penId: string;
+  checkType: 'check_in' | 'check_out';
+  note?: string;
+}): Promise<any> {
+  const res = await fetch(`${BACKEND_URL}/api/staff/attendance`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      staff_id: payload.staffId,
+      staff_name: payload.staffName,
+      pen_id: payload.penId,
+      check_type: payload.checkType,
+      note: payload.note || 'Chấm công thủ công (PWA)',
+    }),
+  });
+  if (!res.ok) throw new Error(`Attendance error ${res.status}`);
+  return res.json();
+}
+
+export async function enrollStaffFace(opts: {
+  staffId: string;
+  staffName: string;
+  role: string;
+  penId: string;
+  fileThang: File;
+  fileTrai?: File | null;
+  filePhai?: File | null;
+}): Promise<any> {
+  const formData = new FormData();
+  formData.append('staff_id', opts.staffId.trim().toUpperCase());
+  formData.append('staff_name', opts.staffName.trim());
+  formData.append('role', opts.role || 'Kỹ thuật viên');
+  formData.append('pen_id', opts.penId || '123');
+  if (opts.fileThang && opts.fileTrai && opts.filePhai) {
+    formData.append('file_thang', opts.fileThang);
+    formData.append('file_nghieng_trai', opts.fileTrai);
+    formData.append('file_nghieng_phai', opts.filePhai);
+  } else {
+    formData.append('file', opts.fileThang);
+  }
+  const res = await fetch(`${BACKEND_URL}/api/staff/enroll`, {
+    method: 'POST',
+    body: formData,
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.detail || `Enroll error ${res.status}`);
+  }
+  return res.json();
+}
+
+export async function triggerOfficeSummaryAPI(targetDate?: string, userId?: string | null): Promise<any> {
+  const res = await fetch(`${BACKEND_URL}/api/office/summarize`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ target_date: targetDate || undefined, user_id: userId || undefined }),
+  });
+  if (!res.ok) throw new Error(`Office summarize error ${res.status}`);
+  return res.json();
+}
+
+export async function updateStaffWageAPI(staffId: string, dailyWage: number): Promise<any> {
+  const res = await fetch(`${BACKEND_URL}/api/staff/${encodeURIComponent(staffId)}/wage`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ daily_wage: dailyWage }),
+  });
+  if (!res.ok) throw new Error(`Update wage error ${res.status}`);
   return res.json();
 }
