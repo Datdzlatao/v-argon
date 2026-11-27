@@ -30,6 +30,7 @@ import {
   Briefcase,
 } from 'lucide-react';
 import './ios.css';
+import { supabase } from '../../lib/supabase';
 import WebSocketStreamPlayer from '../../components/WebSocketStreamPlayer';
 import GeminiMarkdown from '../../components/GeminiMarkdown';
 import FeedExtendedModules from '../../components/FeedExtendedModules';
@@ -89,6 +90,15 @@ function formatActionLabel(telemetry: any): { title: string; reason?: string } {
 }
 
 export default function IosPwaPage() {
+  const [session, setSession] = useState<any>(null);
+  const [authChecked, setAuthChecked] = useState(false);
+  const [isDemoMode, setIsDemoMode] = useState(false);
+  const [authMode, setAuthMode] = useState<'login' | 'register'>('login');
+  const [loginEmail, setLoginEmail] = useState('');
+  const [loginPassword, setLoginPassword] = useState('');
+  const [authErr, setAuthErr] = useState('');
+  const [authBusy, setAuthBusy] = useState(false);
+
   const [activeTab, setActiveTab] = useState<TabKey>('home');
   const [pens, setPens] = useState<PenItem[]>([]);
   const [currentPenId, setCurrentPenId] = useState<string>('');
@@ -559,9 +569,115 @@ function getOrCreateIosUserId(): string {
     return { icon: Sprout, color: 'text-emerald-600 bg-emerald-50' };
   };
 
+  useEffect(() => {
+    supabase.auth.getSession().then(({ data: { session: s } }) => {
+      if (s) setSession(s);
+      setAuthChecked(true);
+    });
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((_ev, s) => {
+      setSession(s);
+    });
+    return () => subscription.unsubscribe();
+  }, []);
+
+  const handleIosAuth = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setAuthErr('');
+    setAuthBusy(true);
+    try {
+      if (authMode === 'login') {
+        const { error } = await supabase.auth.signInWithPassword({ email: loginEmail.trim(), password: loginPassword });
+        if (error) setAuthErr(error.message);
+      } else {
+        const { error } = await supabase.auth.signUp({ email: loginEmail.trim(), password: loginPassword });
+        if (error) setAuthErr(error.message);
+      }
+    } finally {
+      setAuthBusy(false);
+    }
+  };
+
   const actionStatus = formatActionLabel(telemetry);
   const ipWsUrl = getActionVideoStreamWsUrl(currentPenId || 'DEFAULT', 'ipcam', currentPen?.camera_url);
   const webcamWsUrl = getActionVideoStreamWsUrl(currentPenId || 'DEFAULT', 'webcam', currentPen?.webcam_url || '0');
+
+  if (!authChecked) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-[#F2F2F7] text-slate-500 text-sm">
+        Đang khởi động V-ARGON...
+      </div>
+    );
+  }
+
+  if (!session && !isDemoMode) {
+    return (
+      <div className="min-h-screen flex flex-col items-center justify-center bg-[#F2F2F7] px-5 py-8">
+        <div className="w-full max-w-sm bg-white rounded-3xl shadow-sm border border-black/5 p-6 space-y-4">
+          <div className="flex items-center gap-3">
+            <div className="w-11 h-11 rounded-2xl bg-[#15803D] flex items-center justify-center shrink-0">
+              <VArgonLogo className="w-6 h-6" variant="white" />
+            </div>
+            <div>
+              <h1 className="text-[18px] font-extrabold text-slate-900">V-ARGON FarmOS</h1>
+              <p className="text-[12px] text-emerald-700 font-semibold">Đăng nhập hệ thống quản lý</p>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-2 bg-slate-100 p-1 rounded-xl text-[12px] font-bold">
+            <button
+              type="button"
+              onClick={() => { setAuthMode('login'); setAuthErr(''); }}
+              className={`py-1.5 rounded-lg ${authMode === 'login' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500'}`}
+            >
+              Đăng nhập
+            </button>
+            <button
+              type="button"
+              onClick={() => { setAuthMode('register'); setAuthErr(''); }}
+              className={`py-1.5 rounded-lg ${authMode === 'register' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500'}`}
+            >
+              Đăng ký
+            </button>
+          </div>
+
+          <form onSubmit={handleIosAuth} className="space-y-2.5">
+            <input
+              type="email"
+              value={loginEmail}
+              onChange={(e) => setLoginEmail(e.target.value)}
+              placeholder="Email..."
+              required
+              className="w-full px-3.5 py-2.5 rounded-xl bg-slate-100 text-[13px] outline-none"
+            />
+            <input
+              type="password"
+              value={loginPassword}
+              onChange={(e) => setLoginPassword(e.target.value)}
+              placeholder="Mật khẩu..."
+              required
+              className="w-full px-3.5 py-2.5 rounded-xl bg-slate-100 text-[13px] outline-none"
+            />
+            {authErr && <p className="text-[12px] text-rose-600 font-medium">{authErr}</p>}
+            <button
+              type="submit"
+              disabled={authBusy}
+              className="w-full py-2.5 rounded-xl bg-emerald-600 text-white text-[13px] font-bold disabled:opacity-50"
+            >
+              {authBusy ? 'Đang xử lý...' : authMode === 'login' ? 'Đăng nhập' : 'Tạo tài khoản'}
+            </button>
+          </form>
+
+          <button
+            type="button"
+            onClick={() => setIsDemoMode(true)}
+            className="w-full py-2.5 rounded-xl bg-slate-100 text-slate-700 text-[12px] font-bold"
+          >
+            Dùng thử nhanh (Demo)
+          </button>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen flex flex-col bg-[#F2F2F7] text-[#1C1C1E]">
@@ -941,112 +1057,43 @@ function getOrCreateIosUserId(): string {
 
         {activeTab === 'attendance' && (
           <div className="space-y-3">
-            {isFaceCamOn ? (
-              <div className="rounded-2xl overflow-hidden">
-                <WebSocketStreamPlayer
-                  wsUrl={getFaceVideoStreamWsUrl(true)}
-                  altText="Quét mặt & Bảo hộ"
-                  isActive={isFaceCamOn}
-                  label="Quét mặt & Bảo hộ (WSS)"
-                />
+            <div className="bg-white rounded-2xl p-3.5 shadow-sm space-y-2">
+              <div className="flex items-center justify-between">
+                <h3 className="text-[13px] font-bold text-slate-900 uppercase">Danh sách nhân sự ({staffList.length})</h3>
+                <span className="text-[11px] font-semibold text-emerald-700">ID tự tăng</span>
               </div>
-            ) : (
-              <div className="bg-black rounded-2xl aspect-video flex flex-col items-center justify-center text-white p-6 text-center">
-                <ScanFace className="w-10 h-10 text-white/40 mb-2" />
-                <p className="text-[15px] font-semibold">Camera điểm danh đang tắt</p>
-                <p className="text-[12px] text-white/60 mt-1">Đứng đủ toàn thân trước camera để kiểm tra bảo hộ</p>
-              </div>
-            )}
-
-            <button
-              onClick={handleToggleFaceCam}
-              className={`w-full py-3.5 rounded-2xl font-bold text-[15px] flex items-center justify-center gap-2 shadow-sm active:scale-[0.99] transition ${
-                isFaceCamOn ? 'bg-rose-500 text-white' : 'bg-emerald-600 text-white'
-              }`}
-            >
-              <Power className="w-4 h-4" />
-              {isFaceCamOn ? 'Tắt Camera Điểm Danh' : 'Bật Camera Điểm Danh'}
-            </button>
-
-            {faceTelemetry && (
-              <div className="bg-white rounded-2xl p-4 shadow-sm space-y-2.5">
-                <div className="flex items-center justify-between">
-                  <span className="text-[13px] font-semibold text-slate-500">Trạng thái bảo hộ</span>
-                  <span
-                    className={`inline-flex items-center gap-1 text-[12px] font-bold px-2.5 py-0.5 rounded-full ${
-                      faceTelemetry.uniform?.is_correct
-                        ? 'bg-emerald-100 text-emerald-700'
-                        : 'bg-amber-100 text-amber-800'
-                    }`}
-                  >
-                    {faceTelemetry.uniform?.is_correct ? (
-                      <CheckCircle2 className="w-3.5 h-3.5" />
-                    ) : (
-                      <AlertTriangle className="w-3.5 h-3.5" />
-                    )}
-                    {faceTelemetry.uniform?.status || 'Đang quét'}
-                  </span>
-                </div>
-                {faceTelemetry.uniform?.message && (
-                  <p className="text-[13px] text-slate-700 leading-snug">
-                    {faceTelemetry.uniform.message}
-                  </p>
-                )}
-                {Array.isArray(faceTelemetry.faces) && faceTelemetry.faces.length > 0 && (
-                  <div className="pt-2 border-t border-black/5 text-[13px]">
-                    <span className="text-slate-500">Nhân viên: </span>
-                    <strong className="text-slate-900">
-                      {faceTelemetry.faces[0].name || 'Người lạ'}
-                    </strong>
+              {staffList.length === 0 ? (
+                <p className="text-[12px] text-slate-400 py-2">Chưa có danh sách nhân sự.</p>
+              ) : (
+                staffList.map((s) => (
+                  <div key={s.id} className="py-2 border-t border-black/5 flex items-center justify-between text-[13px]">
+                    <span className="font-bold text-slate-900">{s.full_name || s.name || s.id}</span>
+                    <span className="text-[11px] text-slate-500">ID: {s.id} • {s.role || 'Nhân viên'}</span>
                   </div>
-                )}
-              </div>
-            )}
+                ))
+              )}
+            </div>
 
-            {staffList.length > 0 && (
-              <div className="bg-white rounded-2xl p-3.5 shadow-sm space-y-2.5">
-                <h3 className="text-[13px] font-semibold text-slate-500 uppercase">Chấm công nhanh</h3>
-                <select
-                  value={selectedStaffId}
-                  onChange={(e) => setSelectedStaffId(e.target.value)}
-                  className="w-full bg-slate-100 rounded-xl px-3 py-2 text-[14px] outline-none"
-                >
-                  {staffList.map((s) => (
-                    <option key={s.id} value={s.id}>
-                      {s.full_name} ({s.id})
-                    </option>
-                  ))}
-                </select>
-                <div className="grid grid-cols-2 gap-2">
-                  <button
-                    onClick={() => handleManualCheckIn('check_in')}
-                    className="py-2.5 rounded-xl bg-emerald-600 text-white text-[13px] font-bold"
-                  >
-                    🟢 Vào ca
-                  </button>
-                  <button
-                    onClick={() => handleManualCheckIn('check_out')}
-                    className="py-2.5 rounded-xl bg-rose-500 text-white text-[13px] font-bold"
-                  >
-                    🔴 Tan ca
-                  </button>
-                </div>
-              </div>
-            )}
-
-            {attendanceHistory.length > 0 && (
-              <div className="bg-white rounded-2xl p-3.5 shadow-sm space-y-2">
-                <h3 className="text-[13px] font-semibold text-slate-500 uppercase">Lịch sử điểm danh</h3>
-                {attendanceHistory.slice(0, 5).map((rec, i) => (
-                  <div key={i} className="text-[13px] py-1.5 border-t border-black/5 flex justify-between">
-                    <span className="font-semibold">{rec.staff_name || rec.staff_id}</span>
-                    <span className="text-slate-500 text-[12px]">
+            <div className="bg-white rounded-2xl p-3.5 shadow-sm space-y-2">
+              <h3 className="text-[13px] font-semibold text-slate-500 uppercase">Lịch sử ra vào ({attendanceHistory.length})</h3>
+              {attendanceHistory.length === 0 ? (
+                <p className="text-[12px] text-slate-400 py-2">Chưa có lịch sử ra vào.</p>
+              ) : (
+                attendanceHistory.map((rec, i) => (
+                  <div key={i} className="text-[13px] py-1.5 border-t border-black/5 flex justify-between items-center gap-2">
+                    <div className="min-w-0">
+                      <span className="font-semibold block truncate">{rec.staff_name || rec.staff_id}</span>
+                      <span className="text-[11px] text-slate-400">
+                        {rec.created_at ? new Date(rec.created_at).toLocaleString('vi-VN') : ''}
+                      </span>
+                    </div>
+                    <span className="text-slate-500 text-[12px] shrink-0">
                       {rec.check_type === 'check_in' ? '🟢 Vào ca' : '🔴 Tan ca'}
                     </span>
                   </div>
-                ))}
-              </div>
-            )}
+                ))
+              )}
+            </div>
           </div>
         )}
 

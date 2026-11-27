@@ -189,7 +189,7 @@ export default function IosPwaPage() {
     supabase.auth.getSession().then(({ data: { session: s } }) => {
       if (s) {
         setSession(s);
-      } else if (window.localStorage.getItem('vargon_ios_demo') === '1') {
+      } else if (window.sessionStorage.getItem('vargon_ios_demo') === '1') {
         setDemoUserId(getOrCreatePwaUserId());
         setIsDemoMode(true);
       }
@@ -640,7 +640,7 @@ export default function IosPwaPage() {
       <IosAuthScreen
         onAuthSuccess={(s) => setSession(s)}
         onDemo={() => {
-          window.localStorage.setItem('vargon_ios_demo', '1');
+          window.sessionStorage.setItem('vargon_ios_demo', '1');
           setDemoUserId(getOrCreatePwaUserId());
           setIsDemoMode(true);
         }}
