@@ -35,6 +35,8 @@ from app.mcp.mcp_server import (
     get_staff_list,
     check_in_staff_face,
     get_today_attendance_summary,
+    google_web_search,
+    search_and_analyze_product_price,
 )
 
 logger = logging.getLogger("smart_manager.agent")
@@ -128,6 +130,8 @@ CÁC CÔNG CỤ (MCP TOOLS) BẠN CÓ:
 18. `get_staff_list(pen_id)`: Tra cứu danh sách nhân sự trang trại, phân công ca trực và chuồng phụ trách.
 19. `check_in_staff_face(staff_id, pen_id, note)`: Điểm danh vào ca làm việc cho nhân viên bằng FaceID nhận diện khuôn mặt.
 20. `get_today_attendance_summary()`: Xem tổng hợp tình hình điểm danh nhân sự hôm nay (ai đã có mặt, ai chưa đến).
+21. `google_web_search(query, num_results)`: TÌM KIẾM WEB QUA TAVILY trực tiếp để tra cứu thông tin thị trường, kỹ thuật hoặc tin tức mới nhất.
+22. `search_and_analyze_product_price(product_name, region, purpose, num_results)`: TÌM KIẾM GIÁ SẢN PHẨM QUA TAVILY VÀ PHÂN TÍCH (khoảng giá, so sánh nguồn, nhận định xu hướng, khuyến nghị nhập kho / xuất chuồng / thu hoạch).
 
 NHIỆM VỤ CỦA BẠN:
 - Hệ thống hỗ trợ RẤT NHIỀU CHUỒNG KHÁC NHAU (ví dụ: Chuồng Heo Khu A1 '123', Chuồng Heo Khu A2 'PEN-A02', Khu Cách Ly 'PEN-ISO-01', Nhà Màng 'PEN-B01'...).
@@ -139,6 +143,8 @@ NHIỆM VỤ CỦA BẠN:
 - Khi người dùng cập nhật bệnh tật hoặc sức khỏe của vật nuôi, bạn PHẢI gọi `update_animal_health`.
 - Khi người dùng muốn đổi chuồng, chuyển chuồng cho vật nuôi, hoặc kiểm tra bất kỳ chuồng nào, hãy gọi tool tương ứng với mã `pen_id` chính xác.
 - Khi người dùng hỏi về bệnh tật của vật nuôi (sốt, tai xanh, tiêu chảy PED, lở mồm long móng...) hoặc sâu bệnh cây trồng (đạo ôn, rầy nâu, sương mai...), bạn PHẢI gọi `search_agricultural_knowledge` hoặc `diagnose_agricultural_disease` để trích xuất phác đồ y tế chuẩn xác và hướng dẫn người dùng chi tiết, an tâm.
+- Khi người dùng hỏi về giá cả sản phẩm, giá vật tư (cám, phân bón, thuốc), giá heo hơi/nông sản hôm nay hoặc nhờ tìm kiếm và phân tích giá thị trường, bạn PHẢI gọi `search_and_analyze_product_price` để tìm kiếm qua Tavily và trả về kết quả phân tích chi tiết.
+- Khi người dùng cần tra cứu thông tin thị trường, tin tức nông nghiệp hoặc kỹ thuật mới nhất trên web, hãy gọi `google_web_search` để tìm kiếm qua Tavily.
 - Luôn trả lời bằng tiếng Việt lịch sự, thân thiện, rõ ràng về mã chuồng thao tác.
 """
         self._mcp_ctx_cache = prompt
@@ -464,6 +470,17 @@ NHIỆM VỤ CỦA BẠN:
                 executed_tools.append({"tool": "get_today_attendance_summary", "args": {}, "result": summary})
                 reply_lines.append(f"🤖 [Smart Farm Agent]: Tình hình điểm danh nhân sự hôm nay:\n{summary}")
 
+        elif any(k in msg for k in ["giá ", "bao nhiêu tiền", "thị trường", "tìm kiếm", "tra cứu web", "search"]):
+            if any(k in msg for k in ["giá ", "bao nhiêu tiền", "thị trường"]):
+                product = re.sub(r"^(tìm|tra|xem|cho hỏi|hỏi|phân tích)?\s*(giá|thị trường)\s*", "", msg).strip() or user_message
+                res = search_and_analyze_product_price(product_name=product)
+                executed_tools.append({"tool": "search_and_analyze_product_price", "args": {"product_name": product}, "result": res})
+                reply_lines.append(res)
+            else:
+                res = google_web_search(query=user_message)
+                executed_tools.append({"tool": "google_web_search", "args": {"query": user_message}, "result": res})
+                reply_lines.append(res)
+
         else:
             reply_lines.append(
                 f"🤖 [Smart Farm AI Agent]: Tôi đã nhận yêu cầu: '{user_message}'.\n"
@@ -471,6 +488,7 @@ NHIỆM VỤ CỦA BẠN:
                 "- 👤 Nhân sự FaceID: 'Điểm danh cho nhân viên NV01 tại chuồng 123', 'Danh sách nhân sự trang trại'\n"
                 "- 🚚 Đổi chuồng: 'Chuyển con HEO-102 sang chuồng cách ly PEN-ISO-01'\n"
                 "- 🩺 Chẩn đoán RAG: 'Chẩn đoán bệnh heo bị sốt cao tai tím', 'Phác đồ điều trị bệnh đạo ôn'\n"
+                "- 💰 Tra giá & thị trường (Tavily): 'Giá heo hơi hôm nay miền Nam', 'Giá cám Con Cò bao nhiêu tiền'\n"
                 "- 🔎 Tra cứu chuồng: 'Xem thông tin chuồng PEN-A02', 'Danh sách các chuồng'\n"
                 "- 🌬️ Điều khiển thiết bị: 'Bật quạt chuồng A2', 'Bật đèn sưởi chuồng 123'\n"
                 "- 🥣 Cho ăn: 'Cho chuồng PEN-A02 ăn 10 kg cám'\n"
@@ -529,6 +547,8 @@ NHIỆM VỤ CỦA BẠN:
                 get_staff_list,
                 check_in_staff_face,
                 get_today_attendance_summary,
+                google_web_search,
+                search_and_analyze_product_price,
             ]
 
             config = types.GenerateContentConfig(
@@ -625,6 +645,8 @@ NHIỆM VỤ CỦA BẠN:
                 get_staff_list,
                 check_in_staff_face,
                 get_today_attendance_summary,
+                google_web_search,
+                search_and_analyze_product_price,
             ]
 
             config = types.GenerateContentConfig(

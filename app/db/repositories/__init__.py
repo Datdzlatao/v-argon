@@ -7,6 +7,7 @@ from app.db.repositories.devices import DevicesRepository
 from app.db.repositories.animals import AnimalsRepository
 from app.db.repositories.crops import CropsRepository
 from app.db.repositories.feed_logs import FeedLogsRepository
+from app.db.repositories.office import OfficeRepository
 
 __all__ = [
     "EnvLogsRepository",
@@ -18,4 +19,5 @@ __all__ = [
     "AnimalsRepository",
     "CropsRepository",
     "FeedLogsRepository",
+    "OfficeRepository",
 ]

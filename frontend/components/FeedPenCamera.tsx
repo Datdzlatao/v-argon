@@ -171,9 +171,9 @@ export default function FeedPenCamera({
   const metrics = telemetry?.metrics || {};
 
   return (
-    <div className="bg-fb-card rounded-2xl shadow-fb-card border border-fb-divider p-4 mb-4">
+    <div className="bg-white rounded-2xl shadow-sm border border-slate-200/80 p-5">
       {/* 1. Header Post */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between pb-3.5 border-b border-fb-divider gap-3">
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between pb-3.5 border-b border-slate-100 gap-3">
         <div className="flex items-center gap-3">
           <div className="w-11 h-11 rounded-2xl bg-gradient-to-tr from-emerald-600 to-teal-500 flex items-center justify-center text-white shadow-inner shrink-0">
             <Video className="w-6 h-6" />
@@ -235,47 +235,47 @@ export default function FeedPenCamera({
 
       {/* 2. Stream Switcher Tabs: IP Cam (Điện thoại) | Webcam (Máy tính) | Xem cả 2 luồng */}
       <div className="mt-3 flex items-center justify-between flex-wrap gap-2">
-        <div className="inline-flex p-1 bg-fb-bg rounded-xl border border-fb-divider text-xs font-semibold">
+        <div className="inline-flex p-1 bg-slate-100 rounded-xl border border-slate-200/80 text-xs font-semibold overflow-x-auto max-w-full no-scrollbar">
           <button
             onClick={() => setStreamMode('ipcam')}
-            className={`px-3 py-1.5 rounded-lg flex items-center gap-1.5 transition ${
+            className={`px-3 py-1.5 rounded-lg flex items-center gap-1.5 transition whitespace-nowrap cursor-pointer ${
               streamMode === 'ipcam'
                 ? 'bg-white text-emerald-700 shadow-sm font-bold border border-emerald-200'
-                : 'text-fb-muted hover:text-fb-text'
+                : 'text-slate-600 hover:text-slate-900'
             }`}
           >
-            <Smartphone className="w-3.5 h-3.5 text-blue-600" />
-            <span>📱 Máy quay điện thoại</span>
+            <Smartphone className="w-3.5 h-3.5 text-blue-600 shrink-0" />
+            <span>IP Cam Điện Thoại</span>
           </button>
 
           <button
             onClick={() => setStreamMode('webcam')}
-            className={`px-3 py-1.5 rounded-lg flex items-center gap-1.5 transition ${
+            className={`px-3 py-1.5 rounded-lg flex items-center gap-1.5 transition whitespace-nowrap cursor-pointer ${
               streamMode === 'webcam'
                 ? 'bg-white text-emerald-700 shadow-sm font-bold border border-emerald-200'
-                : 'text-fb-muted hover:text-fb-text'
+                : 'text-slate-600 hover:text-slate-900'
             }`}
           >
-            <Laptop className="w-3.5 h-3.5 text-purple-600" />
-            <span>💻 Máy quay máy tính</span>
+            <Laptop className="w-3.5 h-3.5 text-purple-600 shrink-0" />
+            <span>Webcam Máy Tính</span>
           </button>
 
           <button
             onClick={() => setStreamMode('dual')}
-            className={`px-3 py-1.5 rounded-lg flex items-center gap-1.5 transition ${
+            className={`px-3 py-1.5 rounded-lg flex items-center gap-1.5 transition whitespace-nowrap cursor-pointer ${
               streamMode === 'dual'
                 ? 'bg-white text-emerald-700 shadow-sm font-bold border border-emerald-200'
-                : 'text-fb-muted hover:text-fb-text'
+                : 'text-slate-600 hover:text-slate-900'
             }`}
           >
-            <Columns className="w-3.5 h-3.5 text-emerald-600" />
-            <span>👥 Xem Cả 2 Luồng (Song Song)</span>
+            <Columns className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
+            <span>Xem Cả 2 Luồng</span>
           </button>
         </div>
 
-        <div className="text-[11px] text-fb-muted flex items-center gap-2">
-          <span className="w-2 h-2 rounded-full bg-emerald-500 animate-ping"></span>
-          <span>Tự động đồng bộ với App Android</span>
+        <div className="text-[11px] text-slate-500 flex items-center gap-2 whitespace-nowrap">
+          <span className="w-2 h-2 rounded-full bg-emerald-500 shrink-0"></span>
+          <span>Đồng bộ App Android</span>
         </div>
       </div>
 

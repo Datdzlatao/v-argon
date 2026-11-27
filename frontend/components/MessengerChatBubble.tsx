@@ -57,7 +57,7 @@ export default function MessengerChatBubble({
     {
       id: '1',
       sender: 'agent',
-      text: `Kính chào bà con! Tôi là Trợ Lý Nông Trại Thông Minh 24/7. Tôi có thể hỗ trợ bà con theo dõi nhiệt độ môi trường, điều khiển quạt thông gió, kiểm tra sức khỏe đàn vật nuôi và quản lý kho vật tư. Bà con cần hỗ trợ gì hôm nay?`,
+      text: `Kính chào bà con! Tôi là Trợ Lý V-ARGON 24/7. Tôi có thể hỗ trợ bà con theo dõi nhiệt độ môi trường, điều khiển quạt thông gió, kiểm tra sức khỏe đàn vật nuôi và quản lý kho vật tư. Bà con cần hỗ trợ gì hôm nay?`,
       time: 'Vừa xong',
     },
   ]);

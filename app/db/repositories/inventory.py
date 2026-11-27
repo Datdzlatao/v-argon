@@ -38,6 +38,8 @@ _INVENTORY_FALLBACK = [
     },
 ]
 
+_INVENTORY_LOGS_FALLBACK: list[dict[str, Any]] = []
+
 
 class InventoryRepository:
     """Repository handling database operations for the `inventory` table."""
@@ -169,14 +171,45 @@ class InventoryRepository:
 
             # Record to inventory_logs
             action_type = "IMPORT" if delta_quantity > 0 else "EXPORT"
-            self.client.table(self._logs_table).insert({
+            log_entry = {
                 "item_name": existing.get("name"),
                 "action_type": action_type,
                 "amount": abs(delta_quantity),
                 "pen_id": pen_id,
                 "note": note or f"AI Agent adjust quantity: {delta_quantity}",
-            }).execute()
+            }
+            self.client.table(self._logs_table).insert(log_entry).execute()
         except Exception as e:
             logger.warning(f"Could not update inventory in Supabase: {e}")
 
+        _INVENTORY_LOGS_FALLBACK.insert(0, {
+            "id": len(_INVENTORY_LOGS_FALLBACK) + 1,
+            "item_name": existing.get("name"),
+            "action_type": "IMPORT" if delta_quantity > 0 else "EXPORT",
+            "amount": abs(delta_quantity),
+            "pen_id": pen_id,
+            "note": note or f"AI Agent adjust quantity: {delta_quantity}",
+            "created_at": datetime.now(timezone.utc).isoformat(),
+        })
+
         return existing
+
+    def list_logs(self, limit: int = 100, action_type: Optional[str] = None) -> list[dict[str, Any]]:
+        """List operation logs (import, export, animal export, crop harvest) from `inventory_logs`."""
+        try:
+            query = (
+                self.client.table(self._logs_table)
+                .select("*")
+                .order("created_at", desc=True)
+                .limit(limit)
+            )
+            if action_type:
+                query = query.eq("action_type", action_type)
+            response = query.execute()
+            if response.data is not None:
+                return response.data
+        except Exception as e:
+            logger.warning(f"Error fetching inventory_logs from Supabase: {e}")
+        if action_type:
+            return [l for l in _INVENTORY_LOGS_FALLBACK if l.get("action_type") == action_type][:limit]
+        return _INVENTORY_LOGS_FALLBACK[:limit]

@@ -417,13 +417,17 @@ class VisionFSMTracker:
     Quản lý luồng xử lý nhận diện khung xương và Máy trạng thái hữu hạn (FSM):
     - Độc lập với nguồn video (dùng được cho cả CLI OpenCV window và Web MJPEG Stream).
     """
-    def __init__(self, target_id: str = "GARDEN_01", cooldown_sec: float = 15.0, on_action_callback=None):
+    def __init__(self, target_id: str = "GARDEN_01", cooldown_sec: float = 15.0, on_action_callback=None, empty_frame_grace_sec: float = 1.0):
         self.target_id = target_id
         self.cooldown_sec = cooldown_sec
         self.on_action_callback = on_action_callback
+        self.empty_frame_grace_sec = empty_frame_grace_sec
         self.fsm_state = "IDLE"
         self.is_occluded = False
         self.is_analyzing = False
+        self.has_sent_in_session = False
+        self.cached_action: Optional[Dict[str, str]] = None
+        self.no_person_since: Optional[float] = None
         self.last_trigger_time = 0.0
         self.last_action_text = "None"
         self.last_action_reason = ""
@@ -437,6 +441,16 @@ class VisionFSMTracker:
             "is_occluded": False
         }
 
+    def _reset_session_cache(self):
+        """Xóa bộ nhớ đệm hành động và đưa FSM về trạng thái ban đầu khi không còn người trong khung hình."""
+        self.cached_action = None
+        self.has_sent_in_session = False
+        self.is_occluded = False
+        self.last_trigger_time = 0.0
+        self.last_action_text = "None"
+        self.last_action_reason = ""
+        self.fsm_state = "IDLE"
+
     def _async_analyze_vlm(self, snap_frame: np.ndarray):
         """Worker chạy trong thread riêng để gọi Gemini và ghi log Supabase không làm đơ camera."""
         try:
@@ -446,6 +460,7 @@ class VisionFSMTracker:
             if vlm_result:
                 action = vlm_result.get("action", "UNKNOWN")
                 reason = vlm_result.get("reason", "")
+                self.cached_action = {"action": action, "reason": reason}
                 self.last_action_text = action
                 self.last_action_reason = reason
                 print(f"🤖 [GEMINI KẾT QUẢ - {self.target_id}]: {action} - {reason}")
@@ -460,9 +475,11 @@ class VisionFSMTracker:
                     else:
                         post_action_log(action, reason, target_id=self.target_id)
             else:
+                self.cached_action = {"action": "VLM Error", "reason": "Không nhận được phản hồi hợp lệ từ Gemini"}
                 self.last_action_text = "VLM Error"
         except Exception as e:
             print(f"❌ [VLM ASYNC LỖI]: {e}")
+            self.cached_action = {"action": "VLM Error", "reason": str(e)}
             self.last_action_text = "VLM Error"
         finally:
             self.is_analyzing = False
@@ -512,6 +529,9 @@ class VisionFSMTracker:
                 landmarks = results.pose_landmarks.landmark
 
         if landmarks:
+            # Có người trong khung hình -> hủy bộ đếm vắng mặt
+            self.no_person_since = None
+
             # Lưu các khớp cần thiết vào dictionary
             for idx in [0, 11, 12, 13, 14, 15, 16, 23, 24, 25, 26, 27, 28]:
                 lm = landmarks[idx]
@@ -543,13 +563,13 @@ class VisionFSMTracker:
             if hip_vis < 0.4:
                 # Nông dân đang vác/bê bao tải, xô to che mất hông
                 self.is_occluded = True
-                self.fsm_state = "SUSPENDED"
+                if not self.is_analyzing and not self.has_sent_in_session:
+                    self.fsm_state = "SUSPENDED"
             elif hip_vis > 0.7 and wrist_vis > 0.7:
                 # Đặt vật xuống hoặc lộ diện rõ ràng các khớp thao tác
                 if self.is_occluded:
                     self.is_occluded = False
-                    self.fsm_state = "RESUMED"
-                elif self.fsm_state != "COOLDOWN":
+                if not self.is_analyzing and not self.has_sent_in_session and self.fsm_state != "COOLDOWN":
                     self.fsm_state = "RESUMED"
 
             # ---------------------------------------------------------
@@ -581,17 +601,25 @@ class VisionFSMTracker:
             })
 
             # ---------------------------------------------------------
-            # BƯỚC 4: KHOẢNH KHẮC VÀNG (GOLDEN TRIGGER) & DEBOUNCE
+            # BƯỚC 4: KHOẢNH KHẮC VÀNG (GOLDEN TRIGGER) & KHÓA THEO PHIÊN CÓ NGƯỜI
+            # Chỉ gửi Gemini 1 lần duy nhất khi có người liên tục trong khung hình
             # ---------------------------------------------------------
-            can_trigger = (self.fsm_state == "RESUMED") and is_bending and (cooldown_remaining <= 0) and (not self.is_analyzing)
+            can_trigger = (
+                (self.fsm_state == "RESUMED")
+                and is_bending
+                and (cooldown_remaining <= 0)
+                and (not self.is_analyzing)
+                and (not self.has_sent_in_session)
+            )
 
             if can_trigger:
+                self.has_sent_in_session = True
                 self.fsm_state = "TRIGGERED"
                 self.is_analyzing = True
-                self.last_trigger_time = time.time()
+                self.last_trigger_time = current_time
                 self.last_action_text = "AI Analyzing..."
                 self.last_action_reason = "Gửi Gemini VLM..."
-                print("\n🔥 [GOLDEN TRIGGER] Phát hiện nông dân đang cúi gập người thao tác!")
+                print("\n🔥 [GOLDEN TRIGGER] Phát hiện nông dân đang cúi gập người thao tác (chỉ gửi 1 lần cho phiên hiện tại)!")
                 print(f"-> Metrics: HipVis={hip_vis:.2f}, TorsoAngle={torso_angle:.1f}°, HeadDrop={head_drop:.2f}")
 
                 # Chạy phân tích VLM bất đồng bộ trong background thread để không giật luồng video
@@ -600,11 +628,18 @@ class VisionFSMTracker:
 
         else:
             # Không phát hiện người trong khung hình
-            if self.fsm_state not in ["COOLDOWN", "TRIGGERED"]:
+            if self.no_person_since is None:
+                self.no_person_since = current_time
+
+            if (current_time - self.no_person_since) >= self.empty_frame_grace_sec and (not self.is_analyzing):
+                if self.has_sent_in_session or self.cached_action is not None or self.fsm_state != "IDLE":
+                    print("🧹 [SESSION RESET] Không còn người trong khung hình -> Xóa bộ nhớ đệm và trở lại từ đầu.")
+                    self._reset_session_cache()
+            elif self.fsm_state not in ["COOLDOWN", "TRIGGERED"]:
                 self.fsm_state = "IDLE"
 
-        # Cập nhật trạng thái Cooldown nếu hết thời gian và không trong tiến trình gọi VLM
-        if self.fsm_state == "COOLDOWN" and cooldown_remaining <= 0 and (not self.is_analyzing):
+        # Chỉ tự thoát COOLDOWN về IDLE nếu chưa khóa phiên (khi có người liên tục thì giữ cache tới khi rời khung hình)
+        if self.fsm_state == "COOLDOWN" and cooldown_remaining <= 0 and (not self.is_analyzing) and (not self.has_sent_in_session):
             self.fsm_state = "IDLE"
 
         # -------------------------------------------------------------

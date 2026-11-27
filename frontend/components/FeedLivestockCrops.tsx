@@ -16,8 +16,17 @@ import {
   Table as TableIcon,
   Search,
   Filter,
-  Scissors
+  Scissors,
+  FileSpreadsheet,
+  ClipboardList
 } from 'lucide-react';
+import { exportTableToExcel } from '../lib/export-excel';
+import {
+  OperationLog,
+  getActionMeta,
+  formatLogTime,
+  exportOperationLogsToExcel,
+} from '../lib/operation-logs';
 
 export interface Animal {
   id: string;
@@ -55,6 +64,7 @@ interface FeedLivestockCropsProps {
   onOpenCropCare: (cropId: string) => void;
   onDeleteCrop: (cropId: string) => void;
   onExportCrop?: (crop: Crop) => void;
+  logs?: OperationLog[];
 }
 
 export default function FeedLivestockCrops({
@@ -71,6 +81,7 @@ export default function FeedLivestockCrops({
   onOpenCropCare,
   onDeleteCrop,
   onExportCrop,
+  logs = [],
 }: FeedLivestockCropsProps) {
   const isLivestock = currentMode === 'livestock';
 
@@ -78,6 +89,47 @@ export default function FeedLivestockCrops({
   const [viewMode, setViewMode] = useState<'table' | 'cards'>('table');
   const [searchQuery, setSearchQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState<'all' | 'ready' | 'attention' | 'healthy'>('all');
+  const [showExportHistory, setShowExportHistory] = useState(false);
+
+  const harvestLogs = useMemo(() => {
+    const targetType = isLivestock ? 'ANIMAL_EXPORT' : 'CROP_HARVEST';
+    return logs.filter((l) => l.action_type === targetType);
+  }, [logs, isLivestock]);
+
+  const handleExportCurrentListExcel = () => {
+    const dateSuffix = new Date().toISOString().slice(0, 10);
+    if (isLivestock) {
+      exportTableToExcel(
+        `danh-sach-dan-vat-nuoi-${dateSuffix}`,
+        'Đàn Vật Nuôi',
+        ['STT', 'Mã Thẻ', 'Loài / Giống', 'Chuồng', 'Cân Nặng (kg)', 'Mục Tiêu (kg)', 'Trạng Thái'],
+        animals.map((a, idx) => [
+          idx + 1,
+          a.id,
+          a.species || '',
+          penName,
+          a.weight ?? 0,
+          a.target_weight ?? 0,
+          a.status || 'Khoe',
+        ])
+      );
+    } else {
+      exportTableToExcel(
+        `danh-sach-cay-trong-${dateSuffix}`,
+        'Cây Trồng & Mùa Vụ',
+        ['STT', 'Mã Vụ', 'Tên Cây Trồng', 'Khu Vườn', 'Số Lượng (gốc)', 'Ngày Trồng', 'Dự Kiến Thu Hoạch'],
+        crops.map((c, idx) => [
+          idx + 1,
+          c.id,
+          c.name,
+          penName,
+          c.quantity ?? 0,
+          c.plant_date || c.planting_date || c.planted_at || '',
+          c.harvest_date || c.expected_harvest || '',
+        ])
+      );
+    }
+  };
 
   // Helper: Icon for Species
   const getSpeciesIcon = (species: string) => {
@@ -205,70 +257,101 @@ export default function FeedLivestockCrops({
     : crops.filter((c) => getCropProgress(c) >= 100).length;
 
   return (
-    <div className="bg-fb-card rounded-2xl shadow-fb-card border border-fb-divider p-4 mb-4">
+    <div className="bg-white rounded-2xl shadow-sm border border-slate-200/80 p-5">
       {/* 1. Header Chung: Tiêu đề, Thống kê, Nút thêm & Chuyển chế độ xem */}
-      <div className="flex flex-col md:flex-row md:items-center justify-between pb-3.5 border-b border-fb-divider gap-3">
-        <div className="flex items-center gap-3">
-          <div className="w-11 h-11 rounded-2xl bg-gradient-to-tr from-emerald-100 to-green-100 flex items-center justify-center text-2xl shadow-inner border border-emerald-200 shrink-0">
-            {isLivestock ? '🐖' : '🌿'}
-          </div>
-          <div>
-            <h4 className="font-bold text-base text-fb-text flex items-center gap-2">
-              <span>{isLivestock ? 'Danh Mục Đàn Vật Nuôi' : 'Danh Sách Cây Trồng & Mùa Vụ'}</span>
-              <span className="text-xs px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-800 font-bold border border-emerald-200">
-                {penName}
-              </span>
-            </h4>
-            <p className="text-xs text-fb-muted mt-0.5 flex items-center gap-2">
-              <span>{isLivestock ? `Tổng số: ${totalCount} cá thể` : `Tổng số: ${totalCount} vụ canh tác`}</span>
-              <span>•</span>
-              <span className="text-emerald-700 font-semibold">
-                {readyCount > 0 
-                  ? `🎉 ${readyCount} ${isLivestock ? 'đạt chuẩn xuất chuồng' : 'sẵn sàng thu hoạch'}`
-                  : `${isLivestock ? 'Đang nuôi dưỡng tích cực' : 'Đang trong vụ sinh trưởng'}`}
-              </span>
-            </p>
-          </div>
-        </div>
-
-        {/* Nút thao tác nhanh trên Header */}
-        <div className="flex items-center gap-2 self-end md:self-auto">
-          {/* Bộ chuyển chế độ hiển thị Bảng / Thẻ */}
-          <div className="flex items-center bg-fb-bg rounded-xl p-1 border border-fb-divider shadow-inner">
-            <button
-              onClick={() => setViewMode('table')}
-              title="Xem dạng Bảng dữ liệu chi tiết"
-              className={`p-1.5 rounded-lg text-xs font-bold transition flex items-center gap-1 cursor-pointer ${
-                viewMode === 'table'
-                  ? 'bg-white text-emerald-700 shadow-sm border border-fb-divider'
-                  : 'text-fb-muted hover:text-fb-text'
-              }`}
-            >
-              <TableIcon className="w-3.5 h-3.5" />
-              <span className="hidden sm:inline">Bảng</span>
-            </button>
-            <button
-              onClick={() => setViewMode('cards')}
-              title="Xem dạng Lưới Thẻ trực quan"
-              className={`p-1.5 rounded-lg text-xs font-bold transition flex items-center gap-1 cursor-pointer ${
-                viewMode === 'cards'
-                  ? 'bg-white text-emerald-700 shadow-sm border border-fb-divider'
-                  : 'text-fb-muted hover:text-fb-text'
-              }`}
-            >
-              <LayoutGrid className="w-3.5 h-3.5" />
-              <span className="hidden sm:inline">Thẻ</span>
-            </button>
+      <div className="flex flex-col gap-3.5 pb-4 border-b border-slate-100">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div className="flex items-center gap-3 min-w-0">
+            <div className="w-10 h-10 rounded-xl bg-emerald-50 text-emerald-700 flex items-center justify-center border border-emerald-200 shrink-0">
+              <Sprout className="w-5 h-5" />
+            </div>
+            <div className="min-w-0">
+              <div className="flex items-center gap-2 flex-wrap">
+                <h4 className="font-bold text-base text-slate-900 whitespace-nowrap">
+                  {isLivestock ? 'Đàn Vật Nuôi' : 'Cây Trồng & Mùa Vụ'}
+                </h4>
+                <span className="text-xs px-2.5 py-0.5 rounded-full bg-emerald-50 text-emerald-800 font-bold border border-emerald-200 whitespace-nowrap">
+                  {penName}
+                </span>
+              </div>
+              <p className="text-xs text-slate-500 mt-0.5 flex items-center gap-2 flex-wrap">
+                <span className="whitespace-nowrap">
+                  {isLivestock ? `Tổng: ${totalCount} cá thể` : `Tổng: ${totalCount} vụ canh tác`}
+                </span>
+                <span>•</span>
+                <span className="text-emerald-700 font-semibold whitespace-nowrap">
+                  {readyCount > 0
+                    ? `${readyCount} ${isLivestock ? 'đạt chuẩn xuất chuồng' : 'sẵn sàng thu hoạch'}`
+                    : `${isLivestock ? 'Đang nuôi dưỡng' : 'Đang sinh trưởng'}`}
+                </span>
+              </p>
+            </div>
           </div>
 
-          {/* Nút thêm mới */}
           <button
+            type="button"
             onClick={onOpenAddModal}
-            className="flex items-center gap-1.5 px-3.5 py-2 bg-emerald-600 hover:bg-emerald-700 active:scale-95 text-white rounded-xl font-bold text-xs transition shadow cursor-pointer"
+            className="inline-flex items-center gap-1.5 px-4 py-2 bg-emerald-700 hover:bg-emerald-800 active:scale-95 text-white rounded-xl font-bold text-xs transition shadow-sm whitespace-nowrap shrink-0 cursor-pointer"
           >
-            <Plus className="w-4 h-4" />
+            <Plus className="w-4 h-4 shrink-0" />
             <span>{isLivestock ? 'Thêm Con Vật' : 'Thêm Cây Trồng'}</span>
           </button>
+        </div>
+
+        {/* Nút thao tác phụ: Chuyển chế độ xem + Log + Excel */}
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <div className="inline-flex items-center bg-slate-100 rounded-xl p-1 border border-slate-200/80">
+            <button
+              type="button"
+              onClick={() => setViewMode('table')}
+              className={`px-2.5 py-1.5 rounded-lg text-xs font-bold transition flex items-center gap-1.5 whitespace-nowrap cursor-pointer ${
+                viewMode === 'table'
+                  ? 'bg-white text-emerald-800 shadow-sm'
+                  : 'text-slate-600 hover:text-slate-900'
+              }`}
+            >
+              <TableIcon className="w-3.5 h-3.5 shrink-0" />
+              <span>Bảng</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => setViewMode('cards')}
+              className={`px-2.5 py-1.5 rounded-lg text-xs font-bold transition flex items-center gap-1.5 whitespace-nowrap cursor-pointer ${
+                viewMode === 'cards'
+                  ? 'bg-white text-emerald-800 shadow-sm'
+                  : 'text-slate-600 hover:text-slate-900'
+              }`}
+            >
+              <LayoutGrid className="w-3.5 h-3.5 shrink-0" />
+              <span>Thẻ</span>
+            </button>
+          </div>
+
+          <div className="flex flex-wrap items-center gap-2">
+            <button
+              type="button"
+              onClick={() => setShowExportHistory((prev) => !prev)}
+              className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl font-bold text-xs transition border whitespace-nowrap cursor-pointer ${
+                showExportHistory
+                  ? 'bg-indigo-600 text-white border-indigo-600 shadow-sm'
+                  : 'bg-indigo-50 hover:bg-indigo-100 text-indigo-800 border-indigo-200'
+              }`}
+            >
+              <ClipboardList className="w-3.5 h-3.5 shrink-0" />
+              <span>
+                {isLivestock ? 'Log Xuất Chuồng' : 'Log Thu Hoạch'} ({harvestLogs.length})
+              </span>
+            </button>
+
+            <button
+              type="button"
+              onClick={handleExportCurrentListExcel}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border border-emerald-200 rounded-xl font-bold text-xs transition whitespace-nowrap cursor-pointer"
+            >
+              <FileSpreadsheet className="w-3.5 h-3.5 shrink-0" />
+              <span>Xuất Excel</span>
+            </button>
+          </div>
         </div>
       </div>
 
@@ -368,14 +451,14 @@ export default function FeedLivestockCrops({
           </div>
         ) : viewMode === 'table' ? (
           /* === B. GIAO DIỆN DẠNG BẢNG (TABLE VIEW) ĐỒNG NHẤT 100% === */
-          <div className="overflow-x-auto rounded-xl border border-fb-divider">
+          <div className="overflow-x-auto rounded-xl border border-slate-200/80">
             <table className="w-full text-left text-sm border-collapse">
               <thead>
-                <tr className="border-b border-fb-divider text-[11px] font-bold text-fb-muted uppercase bg-fb-bg/70 tracking-wider">
+                <tr className="border-b border-slate-200 text-[11px] font-bold text-slate-500 uppercase bg-slate-50/90 tracking-wider whitespace-nowrap">
                   <th className="py-3 px-3.5">Mã Định Danh</th>
-                  <th className="py-3 px-3">Phân Loại / Loài</th>
+                  <th className="py-3 px-3">Phân Loại</th>
                   <th className="py-3 px-3">{isLivestock ? 'Cân Nặng / Mục Tiêu' : 'Tiến Độ Vụ Mùa'}</th>
-                  <th className="py-3 px-3">Trạng Thái Thể Trạng</th>
+                  <th className="py-3 px-3">Trạng Thái</th>
                   <th className="py-3 px-3.5 text-right">Thao Tác</th>
                 </tr>
               </thead>
@@ -419,41 +502,41 @@ export default function FeedLivestockCrops({
                         </td>
 
                         {/* Cột 4: Huy hiệu trạng thái */}
-                        <td className="py-3 px-3">
+                        <td className="py-3 px-3 whitespace-nowrap">
                           {a.isReady ? (
-                            <span className="inline-flex items-center gap-1 text-[11px] font-bold px-2.5 py-1 rounded-full bg-emerald-600 text-white shadow-sm animate-pulse">
-                              <CheckCircle2 className="w-3 h-3" /> Đạt Chuẩn Xuất Chuồng
+                            <span className="inline-flex items-center gap-1 text-[11px] font-bold px-2.5 py-1 rounded-full bg-emerald-600 text-white shadow-sm whitespace-nowrap">
+                              <CheckCircle2 className="w-3 h-3 shrink-0" /> Đạt Chuẩn Xuất
                             </span>
                           ) : a.isSick ? (
-                            <span className="inline-flex items-center gap-1 text-[11px] font-bold px-2.5 py-1 rounded-full bg-red-100 text-red-700">
-                              <AlertCircle className="w-3 h-3 text-red-500" /> Biếng Ăn / Cần Chú Ý
+                            <span className="inline-flex items-center gap-1 text-[11px] font-bold px-2.5 py-1 rounded-full bg-rose-100 text-rose-700 whitespace-nowrap">
+                              <AlertCircle className="w-3 h-3 text-rose-500 shrink-0" /> Cần Chú Ý
                             </span>
                           ) : a.isSkinny ? (
-                            <span className="inline-flex items-center gap-1 text-[11px] font-bold px-2.5 py-1 rounded-full bg-amber-100 text-amber-800">
-                              <AlertCircle className="w-3 h-3 text-amber-500" /> Còi Cọc
+                            <span className="inline-flex items-center gap-1 text-[11px] font-bold px-2.5 py-1 rounded-full bg-amber-100 text-amber-800 whitespace-nowrap">
+                              <AlertCircle className="w-3 h-3 text-amber-500 shrink-0" /> Còi Cọc
                             </span>
                           ) : (
-                            <span className="inline-flex items-center gap-1 text-[11px] font-bold px-2.5 py-1 rounded-full bg-emerald-100 text-emerald-800">
-                              <CheckCircle2 className="w-3 h-3 text-emerald-600" /> Khỏe Mạnh
+                            <span className="inline-flex items-center gap-1 text-[11px] font-bold px-2.5 py-1 rounded-full bg-emerald-100 text-emerald-800 whitespace-nowrap">
+                              <CheckCircle2 className="w-3 h-3 text-emerald-600 shrink-0" /> Khỏe Mạnh
                             </span>
                           )}
                         </td>
 
                         {/* Cột 5: Cụm nút thao tác */}
-                        <td className="py-3 px-3.5 text-right">
+                        <td className="py-3 px-3.5 text-right whitespace-nowrap">
                           <div className="flex items-center justify-end gap-1.5">
                             {onExportAnimal && (
                               <button
                                 onClick={() => onExportAnimal(a)}
                                 title="Bán hoặc xuất chuồng cá thể này"
-                                className={`flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs font-bold transition shadow-sm cursor-pointer ${
+                                className={`inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs font-bold transition shadow-sm cursor-pointer whitespace-nowrap ${
                                   a.isReady
                                     ? 'bg-emerald-600 hover:bg-emerald-700 text-white'
                                     : 'bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border border-emerald-300'
                                 }`}
                               >
-                                <Truck className="w-3.5 h-3.5" />
-                                <span>Xuất Chuồng</span>
+                                <Truck className="w-3.5 h-3.5 shrink-0" />
+                                <span>Xuất</span>
                               </button>
                             )}
 
@@ -527,40 +610,40 @@ export default function FeedLivestockCrops({
                         </td>
 
                         {/* Cột 4: Huy hiệu trạng thái */}
-                        <td className="py-3 px-3">
+                        <td className="py-3 px-3 whitespace-nowrap">
                           {c.isReady ? (
-                            <span className="inline-flex items-center gap-1 text-[11px] font-bold px-2.5 py-1 rounded-full bg-emerald-600 text-white shadow-sm animate-pulse">
-                              <CheckCircle2 className="w-3 h-3" /> Sẵn Sàng Thu Hoạch
+                            <span className="inline-flex items-center gap-1 text-[11px] font-bold px-2.5 py-1 rounded-full bg-emerald-600 text-white shadow-sm whitespace-nowrap">
+                              <CheckCircle2 className="w-3 h-3 shrink-0" /> Sẵn Thu Hoạch
                             </span>
                           ) : c.isSick ? (
-                            <span className="inline-flex items-center gap-1 text-[11px] font-bold px-2.5 py-1 rounded-full bg-red-100 text-red-700">
-                              <AlertCircle className="w-3 h-3 text-red-500" /> Sâu Bệnh / Cần Chú Ý
+                            <span className="inline-flex items-center gap-1 text-[11px] font-bold px-2.5 py-1 rounded-full bg-rose-100 text-rose-700 whitespace-nowrap">
+                              <AlertCircle className="w-3 h-3 text-rose-500 shrink-0" /> Sâu Bệnh
                             </span>
                           ) : c.isAttention ? (
-                            <span className="inline-flex items-center gap-1 text-[11px] font-bold px-2.5 py-1 rounded-full bg-amber-100 text-amber-800">
-                              <AlertCircle className="w-3 h-3 text-amber-500" /> Chậm Lớn / Cần Tưới
+                            <span className="inline-flex items-center gap-1 text-[11px] font-bold px-2.5 py-1 rounded-full bg-amber-100 text-amber-800 whitespace-nowrap">
+                              <AlertCircle className="w-3 h-3 text-amber-500 shrink-0" /> Cần Tưới
                             </span>
                           ) : (
-                            <span className="inline-flex items-center gap-1 text-[11px] font-bold px-2.5 py-1 rounded-full bg-emerald-100 text-emerald-800">
-                              <CheckCircle2 className="w-3 h-3 text-emerald-600" /> Sinh Trưởng Tốt
+                            <span className="inline-flex items-center gap-1 text-[11px] font-bold px-2.5 py-1 rounded-full bg-emerald-100 text-emerald-800 whitespace-nowrap">
+                              <CheckCircle2 className="w-3 h-3 text-emerald-600 shrink-0" /> Tốt
                             </span>
                           )}
                         </td>
 
                         {/* Cột 5: Cụm nút thao tác */}
-                        <td className="py-3 px-3.5 text-right">
+                        <td className="py-3 px-3.5 text-right whitespace-nowrap">
                           <div className="flex items-center justify-end gap-1.5">
                             {onExportCrop ? (
                               <button
                                 onClick={() => onExportCrop(c)}
                                 title="Thu hoạch hoặc xuất bán vụ mùa này"
-                                className={`flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs font-bold transition shadow-sm cursor-pointer ${
+                                className={`inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs font-bold transition shadow-sm cursor-pointer whitespace-nowrap ${
                                   c.isReady
                                     ? 'bg-emerald-600 hover:bg-emerald-700 text-white'
                                     : 'bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border border-emerald-300'
                                 }`}
                               >
-                                <Scissors className="w-3.5 h-3.5" />
+                                <Scissors className="w-3.5 h-3.5 shrink-0" />
                                 <span>Thu Hoạch</span>
                               </button>
                             ) : null}
@@ -827,6 +910,77 @@ export default function FeedLivestockCrops({
           </div>
         )}
       </div>
+
+      {/* 4. Nhật ký Xuất Chuồng / Thu Hoạch & Xuất Excel */}
+      {showExportHistory && (
+        <div className="mt-4 pt-3.5 border-t border-fb-divider space-y-2.5">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <div className="flex items-center gap-2">
+              <span className="text-xs font-extrabold text-fb-text">
+                {isLivestock
+                  ? `🚚 Nhật Ký Xuất Chuồng (${harvestLogs.length} lượt)`
+                  : `🌾 Nhật Ký Thu Hoạch (${harvestLogs.length} lượt)`}
+              </span>
+            </div>
+            <button
+              type="button"
+              onClick={() =>
+                exportOperationLogsToExcel(
+                  harvestLogs,
+                  isLivestock ? 'nhat-ky-xuat-chuong' : 'nhat-ky-thu-hoach',
+                  isLivestock ? 'Nhật Ký Xuất Chuồng' : 'Nhật Ký Thu Hoạch'
+                )
+              }
+              className="inline-flex items-center gap-1.5 rounded-xl border border-emerald-200 bg-emerald-50 hover:bg-emerald-100 px-3 py-1.5 text-[11px] font-bold text-emerald-800 transition cursor-pointer"
+            >
+              <FileSpreadsheet className="w-3.5 h-3.5" />
+              <span>Xuất Excel {isLivestock ? 'Xuất Chuồng' : 'Thu Hoạch'}</span>
+            </button>
+          </div>
+
+          {harvestLogs.length === 0 ? (
+            <div className="text-center py-4 text-xs text-fb-muted bg-fb-bg/40 rounded-xl border border-dashed border-fb-divider">
+              Chưa có lượt {isLivestock ? 'xuất chuồng' : 'thu hoạch'} nào được ghi nhận.
+            </div>
+          ) : (
+            <div className="max-h-56 overflow-y-auto space-y-1.5 pr-1">
+              {harvestLogs.map((log) => {
+                const meta = getActionMeta(log.action_type);
+                return (
+                  <div
+                    key={String(log.id)}
+                    className="flex flex-col sm:flex-row sm:items-center justify-between gap-1.5 p-2.5 rounded-xl bg-fb-bg/40 border border-fb-divider text-xs"
+                  >
+                    <div className="min-w-0">
+                      <div className="flex flex-wrap items-center gap-1.5">
+                        <span
+                          className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold border ${meta.badgeClass}`}
+                        >
+                          <span>{meta.icon}</span>
+                          <span>{meta.label}</span>
+                        </span>
+                        <span className="font-bold text-fb-text">{log.item_name}</span>
+                        {log.pen_id && (
+                          <span className="text-[11px] text-fb-muted">• Chuồng {log.pen_id}</span>
+                        )}
+                      </div>
+                      {log.note && (
+                        <p className="text-[11px] text-fb-muted mt-0.5 break-words">{log.note}</p>
+                      )}
+                    </div>
+                    <div className="flex sm:flex-col items-center sm:items-end justify-between shrink-0">
+                      <span className="font-extrabold text-fb-text">
+                        {log.amount} {meta.unitHint}
+                      </span>
+                      <span className="text-[10px] text-fb-muted">{formatLogTime(log.created_at)}</span>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      )}
     </div>
   );
 }

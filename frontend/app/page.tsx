@@ -23,7 +23,9 @@ import FeedStaffAttendance from '../components/FeedStaffAttendance';
 import FeedPenCamera from '../components/FeedPenCamera';
 import FeedLivestockCrops from '../components/FeedLivestockCrops';
 import FeedInventory from '../components/FeedInventory';
+import FeedExtendedModules from '../components/FeedExtendedModules';
 import MessengerChatBubble from '../components/MessengerChatBubble';
+import LandingIntro from '../components/LandingIntro';
 import {
   ModalAddPen,
   ModalConfigCamera,
@@ -37,7 +39,14 @@ import {
   ModalCropTracking,
   ModalCropCare,
 } from '../components/Modals';
-import { ShieldAlert, Sparkles, Sprout, ArrowRight } from 'lucide-react';
+import { ShieldAlert, Sparkles, Sprout, ArrowRight, Home as HomeIcon, LayoutGrid, Briefcase } from 'lucide-react';
+import {
+  OperationLog,
+  OperationActionType,
+  loadLocalOperationLogs,
+  saveLocalOperationLogs,
+  mergeOperationLogs,
+} from '../lib/operation-logs';
 
 export default function Home() {
   // --- AUTH STATE ---
@@ -49,6 +58,7 @@ export default function Home() {
   const [isDemoMode, setIsDemoMode] = useState(false);
 
   // --- APP STATE ---
+  const [dashboardTab, setDashboardTab] = useState<'home' | 'operations' | 'general'>('home');
   const [currentMode, setCurrentMode] = useState<'livestock' | 'cultivation'>('livestock');
   const [pens, setPens] = useState<any[]>([]);
   const [currentPenId, setCurrentPenId] = useState<string>('');
@@ -56,6 +66,7 @@ export default function Home() {
   const [animals, setAnimals] = useState<any[]>([]);
   const [crops, setCrops] = useState<any[]>([]);
   const [inventory, setInventory] = useState<any[]>([]);
+  const [inventoryLogs, setInventoryLogs] = useState<OperationLog[]>([]);
 
   // Environment Realtime Metrics
   const [envData, setEnvData] = useState({ temp: 28.5, hum: 70, smell: 150 });
@@ -122,12 +133,14 @@ export default function Home() {
     if (item.action_route === 'chat') {
       setIsMessengerOpen(true);
     } else if (item.action_route === 'inventory') {
-      document.getElementById('section-inventory')?.scrollIntoView({ behavior: 'smooth' });
+      setDashboardTab('operations');
+      setTimeout(() => document.getElementById('section-inventory')?.scrollIntoView({ behavior: 'smooth' }), 80);
       setModalOpen((prev) => ({ ...prev, importInv: true }));
     } else if (item.action_route === 'livestock') {
+      setDashboardTab('home');
       setCurrentMode('livestock');
       currentModeRef.current = 'livestock';
-      document.getElementById('section-livestock-crops')?.scrollIntoView({ behavior: 'smooth' });
+      setTimeout(() => document.getElementById('section-livestock-crops')?.scrollIntoView({ behavior: 'smooth' }), 80);
       if (item.target_type === 'animal' && item.target_id) {
         setSelectedAnimalId(item.target_id);
         selectedAnimalIdRef.current = item.target_id;
@@ -136,9 +149,10 @@ export default function Home() {
         setModalOpen((prev) => ({ ...prev, health: true }));
       }
     } else if (item.action_route === 'crops') {
+      setDashboardTab('home');
       setCurrentMode('cultivation');
       currentModeRef.current = 'cultivation';
-      document.getElementById('section-livestock-crops')?.scrollIntoView({ behavior: 'smooth' });
+      setTimeout(() => document.getElementById('section-livestock-crops')?.scrollIntoView({ behavior: 'smooth' }), 80);
       if (item.target_type === 'crop' && item.target_id) {
         setSelectedCropId(item.target_id);
         selectedCropIdRef.current = item.target_id;
@@ -147,9 +161,11 @@ export default function Home() {
         setModalOpen((prev) => ({ ...prev, cropCare: true }));
       }
     } else if (item.action_route === 'camera') {
-      document.getElementById('section-camera')?.scrollIntoView({ behavior: 'smooth' });
+      setDashboardTab('operations');
+      setTimeout(() => document.getElementById('section-camera')?.scrollIntoView({ behavior: 'smooth' }), 80);
     } else {
-      document.getElementById('section-env')?.scrollIntoView({ behavior: 'smooth' });
+      setDashboardTab('operations');
+      setTimeout(() => document.getElementById('section-env')?.scrollIntoView({ behavior: 'smooth' }), 80);
     }
   };
 
@@ -321,6 +337,7 @@ export default function Home() {
   const loadInitialData = async (activeSession = session) => {
     await fetchPens(activeSession);
     await fetchInventory();
+    await fetchInventoryLogs();
   };
 
   // 4. Fetch Pens based on Mode & User Isolation
@@ -469,6 +486,74 @@ export default function Home() {
     }
   };
 
+  // 5b. Fetch Inventory & Operation Logs (Nhập kho, Xuất kho, Xuất chuồng, Thu hoạch)
+  const fetchInventoryLogs = async () => {
+    const localLogs = loadLocalOperationLogs();
+    try {
+      const { data, error } = await supabase
+        .from('inventory_logs')
+        .select('*')
+        .order('created_at', { ascending: false })
+        .limit(200);
+      if (!error && data) {
+        const merged = mergeOperationLogs(data as OperationLog[], localLogs);
+        setInventoryLogs((prev) => (JSON.stringify(prev) === JSON.stringify(merged) ? prev : merged));
+        saveLocalOperationLogs(merged);
+        return;
+      }
+    } catch (err) {
+      console.warn('Error fetching inventory_logs:', err);
+    }
+    if (localLogs.length > 0) {
+      setInventoryLogs((prev) => (JSON.stringify(prev) === JSON.stringify(localLogs) ? prev : localLogs));
+    }
+  };
+
+  // Helper ghi log thống nhất cho Nhập kho, Xuất kho, Xuất chuồng, Thu hoạch
+  const recordOperationLog = async (
+    actionType: OperationActionType,
+    itemName: string,
+    amount: number,
+    penId: string | null,
+    note: string
+  ) => {
+    const nowIso = new Date().toISOString();
+    const localEntry: OperationLog = {
+      id: `local_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
+      item_name: itemName,
+      action_type: actionType,
+      amount: Number(amount) || 0,
+      pen_id: penId || null,
+      note,
+      created_at: nowIso,
+    };
+
+    setInventoryLogs((prev) => {
+      const next = mergeOperationLogs([localEntry], prev);
+      saveLocalOperationLogs(next);
+      return next;
+    });
+
+    try {
+      const { error } = await supabase.from('inventory_logs').insert([
+        {
+          user_id: session?.user?.id || null,
+          item_name: itemName,
+          action_type: actionType,
+          amount: Number(amount) || 0,
+          pen_id: penId || null,
+          note,
+          created_at: nowIso,
+        },
+      ]);
+      if (!error) {
+        await fetchInventoryLogs();
+      }
+    } catch (err) {
+      console.warn('Could not persist operation log to Supabase:', err);
+    }
+  };
+
   // 6. Supabase Full Realtime Subscription Across All Database Tables (Khởi tạo 1 lần duy nhất)
   useEffect(() => {
     const channelName = `farm-sync-${Date.now()}`;
@@ -589,6 +674,14 @@ export default function Home() {
             showRealtimeNotification('inventory', `Đã xóa mặt hàng kho`);
             await fetchInventory();
           }
+        }
+      )
+      // D2. inventory_logs: Nhật ký nhập kho, xuất kho, xuất chuồng
+      .on(
+        'postgres_changes',
+        { event: 'INSERT', schema: 'public', table: 'inventory_logs' },
+        async () => {
+          await fetchInventoryLogs();
         }
       )
       // E. crops: Cây trồng và mùa vụ
@@ -714,6 +807,7 @@ export default function Home() {
         await Promise.all([
           loadPenData(activePen),
           fetchInventory(),
+          fetchInventoryLogs(),
         ]);
 
         // Nếu người dùng đang mở theo dõi chi tiết cá thể vật nuôi, tự động tải thêm logs mới
@@ -787,6 +881,15 @@ export default function Home() {
           message: `Đã xuất chuồng thành công cá thể ${animal.id} (${animal.species}, ${animal.weight} kg)`,
         },
       ]);
+
+      // 3b. Lưu log xuất chuồng vào inventory_logs + localStorage
+      await recordOperationLog(
+        'ANIMAL_EXPORT',
+        `${animal.id} (${animal.species || 'Vật nuôi'})`,
+        Number(animal.weight || 0),
+        activePen || null,
+        `Xuất chuồng cá thể ${animal.id} • Giống: ${animal.species || 'Vật nuôi'} • Cân nặng: ${animal.weight} kg / Mục tiêu: ${animal.target_weight || 0} kg`
+      );
     } catch (err) {
       console.error('Lỗi khi lưu xuất chuồng:', err);
     }
@@ -820,6 +923,15 @@ export default function Home() {
           message: `Đã thu hoạch thành công vụ mùa ${crop.name} (${crop.quantity} gốc)`,
         },
       ]);
+
+      // 3b. Lưu log thu hoạch vào inventory_logs + localStorage
+      await recordOperationLog(
+        'CROP_HARVEST',
+        `${crop.name} (ID: ${crop.id})`,
+        Number(crop.quantity || 0),
+        activePen || null,
+        `Thu hoạch vụ mùa ${crop.name} • Quy mô: ${crop.quantity} gốc/luống`
+      );
     } catch (err) {
       console.error('Lỗi khi lưu thu hoạch:', err);
     }
@@ -866,81 +978,23 @@ export default function Home() {
     setIsDemoMode(false);
   };
 
-  // --- RENDER LOGIN IF NOT AUTHENTICATED & NOT DEMO ---
+  // --- RENDER LANDING INTRO + LOGIN IF NOT AUTHENTICATED & NOT DEMO ---
   if (!session && !isDemoMode) {
     return (
-      <div className="min-h-screen bg-fb-bg flex flex-col justify-center items-center p-4">
-        <div className="w-full max-w-md bg-fb-card rounded-2xl shadow-fb-popover border border-fb-divider p-8">
-          <div className="text-center mb-6">
-            <div className="w-16 h-16 rounded-full bg-gradient-to-tr from-emerald-600 to-green-500 mx-auto flex items-center justify-center text-white shadow-lg mb-3">
-              <Sprout className="w-9 h-9" />
-            </div>
-            <h2 className="text-2xl font-extrabold text-fb-text tracking-tight">Nông Trại Thông Minh</h2>
-            <p className="text-xs text-fb-muted mt-1">
-              Hệ Thống Quản Lý Nông Trại & Trợ Lý Trực Tuyến 24/7
-            </p>
-          </div>
-
-          <form onSubmit={handleAuth} className="space-y-4">
-            <div>
-              <label className="block text-xs font-bold text-fb-muted mb-1">Email Người Quản Lý</label>
-              <input
-                type="email"
-                required
-                value={email}
-                onChange={(e) => setEmail(e.target.value)}
-                placeholder="quanly@nongtrai.vn"
-                className="w-full bg-fb-bg text-sm rounded-xl px-3.5 py-2.5 border border-fb-divider focus:ring-2 focus:ring-emerald-500"
-              />
-            </div>
-
-            <div>
-              <label className="block text-xs font-bold text-fb-muted mb-1">Mật Khẩu</label>
-              <input
-                type="password"
-                required
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                placeholder="••••••••"
-                className="w-full bg-fb-bg text-sm rounded-xl px-3.5 py-2.5 border border-fb-divider focus:ring-2 focus:ring-emerald-500"
-              />
-            </div>
-
-            {authError && (
-              <p className="text-xs text-red-600 bg-red-50 p-2.5 rounded-xl border border-red-200">
-                {authError}
-              </p>
-            )}
-
-            <button
-              type="submit"
-              className="w-full py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-sm rounded-xl transition shadow cursor-pointer"
-            >
-              {authMode === 'login' ? 'Đăng Nhập Quản Lý' : 'Tạo Tài Khoản Mới'}
-            </button>
-          </form>
-
-          <div className="mt-4 pt-4 border-t border-fb-divider flex items-center justify-between text-xs">
-            <button
-              onClick={() => setAuthMode(authMode === 'login' ? 'register' : 'login')}
-              className="text-emerald-700 font-semibold hover:underline cursor-pointer"
-            >
-              {authMode === 'login' ? 'Chưa có tài khoản? Đăng ký ngay' : 'Đã có tài khoản? Đăng nhập'}
-            </button>
-
-            <button
-              onClick={() => {
-                setIsDemoMode(true);
-                loadInitialData();
-              }}
-              className="text-emerald-700 font-bold hover:underline flex items-center gap-1 cursor-pointer"
-            >
-              <span>Trải Nghiệm Thử Nhanh</span>
-              <ArrowRight className="w-3.5 h-3.5" />
-            </button>
-          </div>
-        </div>
-      </div>
+      <LandingIntro
+        authMode={authMode}
+        setAuthMode={setAuthMode}
+        email={email}
+        setEmail={setEmail}
+        password={password}
+        setPassword={setPassword}
+        authError={authError}
+        handleAuth={handleAuth}
+        onDemo={() => {
+          setIsDemoMode(true);
+          loadInitialData();
+        }}
+      />
     );
   }
 
@@ -969,8 +1023,69 @@ export default function Home() {
         onTriggerBriefing={handleTriggerBriefing}
       />
 
-      {/* 2. Main 3-Column Layout */}
-      <div className="max-w-7xl mx-auto w-full px-2 sm:px-4 py-4 flex gap-4 flex-1 min-w-0 overflow-x-hidden">
+      {/* 1.5 Top Dashboard Tab Bar */}
+      <div className="bg-white border-b border-slate-200/80">
+        <div className="max-w-[1440px] mx-auto px-4 sm:px-6 py-2.5 flex items-center justify-between gap-2 overflow-x-auto no-scrollbar">
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={() => setDashboardTab('home')}
+              className={`inline-flex items-center gap-2 px-4 py-2 rounded-xl text-xs sm:text-sm font-bold whitespace-nowrap transition cursor-pointer ${
+                dashboardTab === 'home'
+                  ? 'bg-emerald-700 text-white shadow-sm'
+                  : 'bg-slate-100 text-slate-600 hover:bg-emerald-50 hover:text-emerald-800'
+              }`}
+            >
+              <HomeIcon className="w-4 h-4 shrink-0" />
+              <span>Trang Chủ &amp; Đàn Nuôi</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => setDashboardTab('operations')}
+              className={`inline-flex items-center gap-2 px-4 py-2 rounded-xl text-xs sm:text-sm font-bold whitespace-nowrap transition cursor-pointer ${
+                dashboardTab === 'operations'
+                  ? 'bg-emerald-700 text-white shadow-sm'
+                  : 'bg-slate-100 text-slate-600 hover:bg-emerald-50 hover:text-emerald-800'
+              }`}
+            >
+              <LayoutGrid className="w-4 h-4 shrink-0" />
+              <span>Cảm Biến, Camera &amp; Kho</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => setDashboardTab('general')}
+              className={`inline-flex items-center gap-2 px-4 py-2 rounded-xl text-xs sm:text-sm font-bold whitespace-nowrap transition cursor-pointer ${
+                dashboardTab === 'general'
+                  ? 'bg-emerald-700 text-white shadow-sm'
+                  : 'bg-slate-100 text-slate-600 hover:bg-emerald-50 hover:text-emerald-800'
+              }`}
+            >
+              <Briefcase className="w-4 h-4 shrink-0" />
+              <span>Quản Lý Chung</span>
+            </button>
+          </div>
+
+          <div className="hidden md:flex items-center gap-2 text-xs text-slate-500 whitespace-nowrap shrink-0">
+            <span>Đang xem:</span>
+            <span className="font-bold text-emerald-800 bg-emerald-50 border border-emerald-200 px-2.5 py-1 rounded-lg">
+              {currentPen.name}
+            </span>
+          </div>
+        </div>
+      </div>
+
+      {/* 2. Main Tabbed Layout */}
+      {dashboardTab === 'general' ? (
+        <div className="max-w-[1440px] mx-auto w-full px-4 sm:px-6 py-6 flex-1 min-w-0">
+          <FeedExtendedModules
+            penName="Toàn Trang Trại"
+            userId={session?.user?.id || null}
+          />
+        </div>
+      ) : (
+      <div className="max-w-[1440px] mx-auto w-full px-4 sm:px-6 py-6 grid grid-cols-1 lg:grid-cols-12 gap-6 items-start flex-1 min-w-0">
         {/* Left Column (Navigation & Pens) */}
         <LeftSidebar
           userEmail={session?.user?.email || 'nongdan@smartfarm.vn'}
@@ -986,9 +1101,13 @@ export default function Home() {
           onOpenAddPenModal={() => setModalOpen({ ...modalOpen, addPen: true })}
         />
 
-        {/* Center Column: The Facebook Newsfeed */}
-        <main className="flex-1 min-w-0 max-w-2xl mx-auto w-full space-y-4">
-          {/* A. Facebook Stories Row */}
+        {/* Center Column */}
+        <main
+          className={`min-w-0 w-full space-y-5 ${
+            dashboardTab === 'home' ? 'lg:col-span-9 xl:col-span-6' : 'lg:col-span-9'
+          }`}
+        >
+          {/* A. Facebook Stories Row (Chọn chuồng nhanh) */}
           <StoriesBar
             pens={pens.map((p) => ({
               ...p,
@@ -1005,174 +1124,188 @@ export default function Home() {
             onOpenAddPenModal={() => setModalOpen({ ...modalOpen, addPen: true })}
           />
 
-          {/* B. Pinned Breaking Alert Card (Auto jumps to top if sensor issue detected) */}
-          {!dismissedAlert && currentPenIssues.length > 0 && (
-            <FeedAlertPinned
-              penName={currentPen.name}
-              penId={currentPenId}
-              issues={currentPenIssues}
-              temp={envData.temp}
-              smell={envData.smell}
-              currentMode={currentMode}
-              onActivateFan={async () => {
-                if (currentMode === 'cultivation') {
-                  alert('Đã kích hoạt hệ thống tưới phun sương làm mát vườn!');
-                  const waterDev = devices.find((d) => 
-                    d.name.toLowerCase().includes('phun') || 
-                    d.name.toLowerCase().includes('bơm') || 
-                    d.name.toLowerCase().includes('tưới')
-                  );
-                  if (waterDev) handleToggleDevice(waterDev.id, false);
-                } else {
-                  alert('Đã kích hoạt quạt thông gió làm mát chuồng!');
-                  const fanDev = devices.find((d) => d.name.toLowerCase().includes('quạt'));
-                  if (fanDev) handleToggleDevice(fanDev.id, false);
+          {dashboardTab === 'home' && (
+            <>
+              {/* B. Pinned Breaking Alert Card */}
+              {!dismissedAlert && currentPenIssues.length > 0 && (
+                <FeedAlertPinned
+                  penName={currentPen.name}
+                  penId={currentPenId}
+                  issues={currentPenIssues}
+                  temp={envData.temp}
+                  smell={envData.smell}
+                  currentMode={currentMode}
+                  onActivateFan={async () => {
+                    if (currentMode === 'cultivation') {
+                      alert('Đã kích hoạt hệ thống tưới phun sương làm mát vườn!');
+                      const waterDev = devices.find((d) => 
+                        d.name.toLowerCase().includes('phun') || 
+                        d.name.toLowerCase().includes('bơm') || 
+                        d.name.toLowerCase().includes('tưới')
+                      );
+                      if (waterDev) handleToggleDevice(waterDev.id, false);
+                    } else {
+                      alert('Đã kích hoạt quạt thông gió làm mát chuồng!');
+                      const fanDev = devices.find((d) => d.name.toLowerCase().includes('quạt'));
+                      if (fanDev) handleToggleDevice(fanDev.id, false);
+                    }
+                  }}
+                  onDismiss={() => setDismissedAlert(true)}
+                  onAskAI={() => setIsMessengerOpen(true)}
+                />
+              )}
+
+              {/* C. Tin mới & Bản tin tổng hợp */}
+              <FeedBriefingCard
+                onOpenChat={() => setIsMessengerOpen(true)}
+                pendingTasksCount={newsfeedCounts?.pending ?? 2}
+                lowStockCount={newsfeedCounts?.lowStock ?? inventory.filter((i) => i.quantity <= 5).length}
+                sickAnimalsCount={
+                  newsfeedCounts?.sick ?? (
+                    currentMode === 'livestock'
+                      ? animals.filter((a) => a.feeding_status === 'Anorexic' || a.status === 'Sick').length
+                      : crops.filter((c) => (c.status || '').toLowerCase().includes('care') || (c.status || '').toLowerCase().includes('sick') || (c.status || '').toLowerCase().includes('dry')).length
+                  )
                 }
-              }}
-              onDismiss={() => setDismissedAlert(true)}
-              onAskAI={() => setIsMessengerOpen(true)}
-            />
+                briefingText={briefingText}
+                onTriggerBriefing={handleTriggerBriefing}
+                isLoading={isBriefingLoading || isNewsfeedLoading}
+                currentMode={currentMode}
+                newsfeedItems={newsfeedItems}
+                onRefreshNewsfeed={() => loadNewsfeed()}
+                onQuickAction={handleNewsfeedQuickAction}
+              />
+
+              {/* D. Con vật & Cây trồng */}
+              <div id="section-livestock-crops">
+                <FeedLivestockCrops
+                  currentMode={currentMode}
+                  animals={animals}
+                  crops={crops}
+                  penName={currentPen.name}
+                  onOpenAddModal={() =>
+                    currentMode === 'livestock'
+                      ? setModalOpen({ ...modalOpen, addAnimal: true })
+                      : setModalOpen({ ...modalOpen, addCrop: true })
+                  }
+                  onExportAnimal={handleExportAnimal}
+                  onExportCrop={handleExportCrop}
+                  logs={inventoryLogs}
+                  onOpenTracking={async (animalId) => {
+                    setSelectedAnimalId(animalId);
+                    selectedAnimalIdRef.current = animalId;
+                    const { data } = await supabase.from('weight_logs').select('*').eq('animal_id', animalId);
+                    setAnimalWeightLogs(data || [{ weight: 20 }, { weight: 25 }]);
+                    setModalOpen({ ...modalOpen, weight: true });
+                  }}
+                  onOpenHealth={async (animalId) => {
+                    setSelectedAnimalId(animalId);
+                    selectedAnimalIdRef.current = animalId;
+                    const { data } = await supabase.from('health_logs').select('*').eq('animal_id', animalId);
+                    setAnimalHealthLogs(data || []);
+                    setModalOpen({ ...modalOpen, health: true });
+                  }}
+                  onDeleteAnimal={async (animalId) => {
+                    if (confirm('Bạn có chắc muốn xóa hồ sơ vật nuôi này?')) {
+                      const activePen = currentPenIdRef.current;
+                      setAnimals((prev) => prev.filter((a) => String(a.id).trim().toLowerCase() !== String(animalId).trim().toLowerCase()));
+                      await supabase.from('animals').delete().eq('id', animalId);
+                      if (activePen) await loadPenData(activePen);
+                      showRealtimeNotification('animals', `Đã xóa hồ sơ cá thể ${animalId}`);
+                    }
+                  }}
+                  onOpenCropTracking={async (cropId) => {
+                    setSelectedCropId(cropId);
+                    selectedCropIdRef.current = cropId;
+                    const { data } = await supabase.from('crop_growth_logs').select('*').eq('crop_id', cropId);
+                    setCropGrowthLogs(data || []);
+                    setModalOpen({ ...modalOpen, cropTrack: true });
+                  }}
+                  onOpenCropCare={async (cropId) => {
+                    setSelectedCropId(cropId);
+                    selectedCropIdRef.current = cropId;
+                    const { data } = await supabase.from('crop_care_logs').select('*').eq('crop_id', cropId);
+                    setCropCareLogs(data || []);
+                    setModalOpen({ ...modalOpen, cropCare: true });
+                  }}
+                  onDeleteCrop={async (cropId) => {
+                    if (confirm('Bạn có chắc muốn xóa vụ mùa cây trồng này?')) {
+                      const activePen = currentPenIdRef.current;
+                      setCrops((prev) => prev.filter((c) => String(c.id).trim().toLowerCase() !== String(cropId).trim().toLowerCase()));
+                      await supabase.from('crops').delete().eq('id', cropId);
+                      if (activePen) await loadPenData(activePen);
+                      showRealtimeNotification('crops', `Đã xóa vụ mùa cây trồng`);
+                    }
+                  }}
+                />
+              </div>
+            </>
           )}
 
-          {/* C. Unified Live Observer News Feed & Morning Briefing */}
-          <FeedBriefingCard
-            onOpenChat={() => setIsMessengerOpen(true)}
-            pendingTasksCount={newsfeedCounts?.pending ?? 2}
-            lowStockCount={newsfeedCounts?.lowStock ?? inventory.filter((i) => i.quantity <= 5).length}
-            sickAnimalsCount={
-              newsfeedCounts?.sick ?? (
-                currentMode === 'livestock'
-                  ? animals.filter((a) => a.feeding_status === 'Anorexic' || a.status === 'Sick').length
-                  : crops.filter((c) => (c.status || '').toLowerCase().includes('care') || (c.status || '').toLowerCase().includes('sick') || (c.status || '').toLowerCase().includes('dry')).length
-              )
-            }
-            briefingText={briefingText}
-            onTriggerBriefing={handleTriggerBriefing}
-            isLoading={isBriefingLoading || isNewsfeedLoading}
-            currentMode={currentMode}
-            newsfeedItems={newsfeedItems}
-            onRefreshNewsfeed={() => loadNewsfeed()}
-            onQuickAction={handleNewsfeedQuickAction}
-          />
+          {dashboardTab === 'operations' && (
+            <>
+              {/* E. Realtime Environment Monitor */}
+              <div id="section-env">
+                <FeedEnvMonitor
+                  penName={currentPen.name}
+                  penId={currentPenId}
+                  currentMode={currentMode}
+                  temp={envData.temp}
+                  hum={envData.hum}
+                  smell={envData.smell}
+                  historyLogs={historyLogs}
+                  onRefresh={() => loadPenData(currentPenIdRef.current)}
+                  onOpenChat={() => setIsMessengerOpen(true)}
+                />
+              </div>
 
-          {/* D. Realtime Environment Monitor Post (Chart.js + Gauges) */}
-          <div id="section-env">
-          <FeedEnvMonitor
-            penName={currentPen.name}
-            penId={currentPenId}
-            currentMode={currentMode}
-            temp={envData.temp}
-            hum={envData.hum}
-            smell={envData.smell}
-            historyLogs={historyLogs}
-            onRefresh={() => loadPenData(currentPenIdRef.current)}
-            onOpenChat={() => setIsMessengerOpen(true)}
-          />
-          </div>
+              {/* F. Camera Giám Sát & AI Action Tracking */}
+              <div id="section-camera">
+                <FeedPenCamera
+                  currentPenId={currentPenId}
+                  penName={currentPen.name}
+                  penCameraUrl={currentPen.camera_url}
+                  penWebcamUrl={currentPen.webcam_url}
+                  currentMode={currentMode}
+                  onOpenConfigCamera={() => setModalOpen({ ...modalOpen, configCamera: true })}
+                  onNotification={(title, desc) => showRealtimeNotification('action_vision', desc)}
+                />
+              </div>
 
-          {/* E. Staff Attendance & 24/7 Face Scan Feed Post */}
-          <FeedStaffAttendance
-            currentPenId={currentPenId}
-            penName={currentPen.name}
-            onNotification={(title, desc) => showRealtimeNotification('staff', desc)}
-          />
+              {/* G. Staff Attendance & Face Scan */}
+              <FeedStaffAttendance
+                currentPenId={currentPenId}
+                penName={currentPen.name}
+                onNotification={(title, desc) => showRealtimeNotification('staff', desc)}
+              />
 
-          {/* F. Camera Giám Sát Chuồng Trại 2 Luồng (IP Cam & Webcam) & AI Action Tracking (Port 8002) */}
-          <div id="section-camera">
-          <FeedPenCamera
-            currentPenId={currentPenId}
-            penName={currentPen.name}
-            penCameraUrl={currentPen.camera_url}
-            penWebcamUrl={currentPen.webcam_url}
-            currentMode={currentMode}
-            onOpenConfigCamera={() => setModalOpen({ ...modalOpen, configCamera: true })}
-            onNotification={(title, desc) => showRealtimeNotification('action_vision', desc)}
-          />
-          </div>
-
-          {/* G. Livestock & Crops Feed Post */}
-          <div id="section-livestock-crops">
-          <FeedLivestockCrops
-            currentMode={currentMode}
-            animals={animals}
-            crops={crops}
-            penName={currentPen.name}
-            onOpenAddModal={() =>
-              currentMode === 'livestock'
-                ? setModalOpen({ ...modalOpen, addAnimal: true })
-                : setModalOpen({ ...modalOpen, addCrop: true })
-            }
-            onExportAnimal={handleExportAnimal}
-            onExportCrop={handleExportCrop}
-            onOpenTracking={async (animalId) => {
-              setSelectedAnimalId(animalId);
-              selectedAnimalIdRef.current = animalId;
-              const { data } = await supabase.from('weight_logs').select('*').eq('animal_id', animalId);
-              setAnimalWeightLogs(data || [{ weight: 20 }, { weight: 25 }]);
-              setModalOpen({ ...modalOpen, weight: true });
-            }}
-            onOpenHealth={async (animalId) => {
-              setSelectedAnimalId(animalId);
-              selectedAnimalIdRef.current = animalId;
-              const { data } = await supabase.from('health_logs').select('*').eq('animal_id', animalId);
-              setAnimalHealthLogs(data || []);
-              setModalOpen({ ...modalOpen, health: true });
-            }}
-            onDeleteAnimal={async (animalId) => {
-              if (confirm('Bạn có chắc muốn xóa hồ sơ vật nuôi này?')) {
-                const activePen = currentPenIdRef.current;
-                setAnimals((prev) => prev.filter((a) => String(a.id).trim().toLowerCase() !== String(animalId).trim().toLowerCase()));
-                await supabase.from('animals').delete().eq('id', animalId);
-                if (activePen) await loadPenData(activePen);
-                showRealtimeNotification('animals', `Đã xóa hồ sơ cá thể ${animalId}`);
-              }
-            }}
-            onOpenCropTracking={async (cropId) => {
-              setSelectedCropId(cropId);
-              selectedCropIdRef.current = cropId;
-              const { data } = await supabase.from('crop_growth_logs').select('*').eq('crop_id', cropId);
-              setCropGrowthLogs(data || []);
-              setModalOpen({ ...modalOpen, cropTrack: true });
-            }}
-            onOpenCropCare={async (cropId) => {
-              setSelectedCropId(cropId);
-              selectedCropIdRef.current = cropId;
-              const { data } = await supabase.from('crop_care_logs').select('*').eq('crop_id', cropId);
-              setCropCareLogs(data || []);
-              setModalOpen({ ...modalOpen, cropCare: true });
-            }}
-            onDeleteCrop={async (cropId) => {
-              if (confirm('Bạn có chắc muốn xóa vụ mùa cây trồng này?')) {
-                const activePen = currentPenIdRef.current;
-                setCrops((prev) => prev.filter((c) => String(c.id).trim().toLowerCase() !== String(cropId).trim().toLowerCase()));
-                await supabase.from('crops').delete().eq('id', cropId);
-                if (activePen) await loadPenData(activePen);
-                showRealtimeNotification('crops', `Đã xóa vụ mùa cây trồng`);
-              }
-            }}
-          />
-          </div>
-
-          {/* G. Inventory Feed Post */}
-          <div id="section-inventory">
-          <FeedInventory
-            items={inventory}
-            currentMode={currentMode}
-            onOpenImport={() => setModalOpen({ ...modalOpen, importInv: true })}
-            onOpenExport={() => setModalOpen({ ...modalOpen, exportInv: true })}
-          />
-          </div>
+              {/* H. Inventory Feed Post */}
+              <div id="section-inventory">
+                <FeedInventory
+                  items={inventory}
+                  logs={inventoryLogs}
+                  pens={pens}
+                  currentMode={currentMode}
+                  onOpenImport={() => setModalOpen({ ...modalOpen, importInv: true })}
+                  onOpenExport={() => setModalOpen({ ...modalOpen, exportInv: true })}
+                />
+              </div>
+            </>
+          )}
         </main>
 
-        {/* Right Column: IoT Switches & Activity Stream */}
-        <RightSidebar
-          devices={devices}
-          penName={currentPen.name}
-          currentMode={currentMode}
-          onToggleDevice={handleToggleDevice}
-          onOpenAddDeviceModal={() => setModalOpen({ ...modalOpen, addDevice: true })}
-        />
+        {/* Right Column: IoT Switches & Activity Stream (Hiển thị ở Trang đầu) */}
+        {dashboardTab === 'home' && (
+          <RightSidebar
+            devices={devices}
+            penName={currentPen.name}
+            currentMode={currentMode}
+            onToggleDevice={handleToggleDevice}
+            onOpenAddDeviceModal={() => setModalOpen({ ...modalOpen, addDevice: true })}
+          />
+        )}
       </div>
+      )}
 
       {/* 3. Floating Messenger Chat Bubble */}
       <MessengerChatBubble
@@ -1329,6 +1462,13 @@ export default function Home() {
             };
             await supabase.from('inventory').insert([newItem]);
           }
+          await recordOperationLog(
+            'IMPORT',
+            name,
+            Number(quantity),
+            null,
+            `Nhập kho (${category === 'Feed' ? 'Thức ăn' : category === 'Fertilizer' ? 'Phân bón' : 'Vật tư khác'}) • Đơn vị: ${unit || 'kg'} • Đơn giá: ${Number(price || 0).toLocaleString('vi-VN')} đ`
+          );
           await fetchInventory();
           showRealtimeNotification('inventory', `Đã nhập kho ${quantity} ${unit} ${name}`);
         }}
@@ -1347,6 +1487,13 @@ export default function Home() {
             await supabase.from('inventory').update({ quantity: updatedQty }).eq('id', item.id);
             // Bảng feed_logs có các cột: pen_id, food_name, amount
             await supabase.from('feed_logs').insert([{ pen_id: penId, food_name: item.name, amount: Number(qty) }]);
+            await recordOperationLog(
+              'EXPORT',
+              item.name,
+              Number(qty),
+              penId || null,
+              note ? `${note} (${item.unit})` : `Xuất dùng ${qty} ${item.unit}`
+            );
             await fetchInventory();
             showRealtimeNotification('inventory', `Đã xuất kho ${qty} ${item.unit} ${item.name} cho chuồng ${penId}`);
           }

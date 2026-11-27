@@ -972,6 +972,91 @@ def diagnose_agricultural_disease(symptoms_or_description: str, species: str = "
         return f"❌ Lỗi chẩn đoán bệnh: {str(e)}"
 
 
+@mcp.tool()
+def google_web_search(query: str, num_results: int = 5) -> str:
+    """
+    Tìm kiếm thông tin trực tiếp trên web (ưu tiên Tavily Search API, dự phòng Gemini Google Search Grounding).
+
+    Args:
+        query: Từ khóa cần tìm kiếm (ví dụ: 'giá cám heo con cò hôm nay', 'giá heo hơi miền Nam')
+        num_results: Số lượng kết quả tối đa (1-10, mặc định: 5)
+    """
+    try:
+        from app.services.google_search_service import google_search_service
+
+        payload = google_search_service.search_web(query=query, num_results=num_results)
+        results = payload.get("results") or []
+        raw_summary = payload.get("raw_summary") or ""
+        lines = [
+            f"🔎 KẾT QUẢ TÌM KIẾM GOOGLE ({payload.get('engine')}):",
+            f"• Từ khóa: {payload.get('query')}",
+        ]
+        if raw_summary:
+            lines.append(f"\n📄 Tóm tắt từ Google:\n{raw_summary}")
+        if results:
+            lines.append("\n🔗 Nguồn tham khảo:")
+            for idx, r in enumerate(results, start=1):
+                title = r.get("title") or "Nguồn"
+                link = r.get("link") or ""
+                snippet = r.get("snippet") or ""
+                lines.append(f"{idx}. {title} — {link}")
+                if snippet:
+                    lines.append(f"   {snippet}")
+        return "\n".join(lines)
+    except Exception as e:
+        logger.error(f"Error in google_web_search: {e}")
+        return f"❌ Lỗi tìm kiếm Google: {str(e)}"
+
+
+@mcp.tool()
+def search_and_analyze_product_price(
+    product_name: str,
+    region: str = "Việt Nam",
+    purpose: str = "tham khảo mua bán",
+    num_results: int = 6,
+) -> str:
+    """
+    Tìm kiếm giá sản phẩm trên web (Tavily Search API / Google Search Grounding) và trả về báo cáo phân tích giá chi tiết cho trang trại.
+
+    Args:
+        product_name: Tên sản phẩm, vật tư hoặc nông sản cần tìm và phân tích giá (ví dụ: 'Cám Con Cò', 'Heo hơi', 'Phân NPK Đầu Trâu', 'Dưa lưới')
+        region: Khu vực thị trường (ví dụ: 'Miền Nam', 'Đồng Nai', 'Hà Nội', mặc định: 'Việt Nam')
+        purpose: Mục đích phân tích ('nhập kho', 'xuất chuồng', 'bán thu hoạch', mặc định: 'tham khảo mua bán')
+        num_results: Số lượng kết quả tối đa để đối chiếu (mặc định: 6)
+    """
+    try:
+        from app.services.google_search_service import google_search_service
+
+        report = google_search_service.search_and_analyze_price(
+            product_name=product_name,
+            region=region,
+            purpose=purpose,
+            num_results=num_results,
+        )
+        results = report.get("results") or []
+        lines = [
+            f"📊 BÁO CÁO TÌM KIẾM & PHÂN TÍCH GIÁ SẢN PHẨM: {report.get('product_name')}",
+            f"• Khu vực: {report.get('region')} | Mục đích: {report.get('purpose')}",
+            f"• Nguồn tìm kiếm: {report.get('engine')} (Từ khóa: \"{report.get('query')}\")",
+            "",
+            "📈 KẾT QUẢ PHÂN TÍCH:",
+            report.get("analysis") or "",
+        ]
+        if results:
+            lines.append("\n🔗 CÁC NGUỒN GOOGLE ĐÃ ĐỐI CHIẾU:")
+            for idx, r in enumerate(results, start=1):
+                title = r.get("title") or "Nguồn Google"
+                link = r.get("link") or ""
+                snippet = r.get("snippet") or ""
+                lines.append(f"{idx}. {title} ({link})")
+                if snippet:
+                    lines.append(f"   {snippet}")
+        return "\n".join(lines)
+    except Exception as e:
+        logger.error(f"Error in search_and_analyze_product_price: {e}")
+        return f"❌ Lỗi tìm kiếm và phân tích giá sản phẩm: {str(e)}"
+
+
 if __name__ == "__main__":
     print(f"🚀 Starting Smart Farm FastMCP Server: {settings.MCP_SERVER_NAME}...")
     mcp.run()

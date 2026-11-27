@@ -128,9 +128,9 @@ export default function FeedEnvMonitor({
   };
 
   return (
-    <div className="bg-fb-card rounded-2xl shadow-fb-card border border-fb-divider p-4 mb-4">
+    <div className="bg-white rounded-2xl shadow-sm border border-slate-200/80 p-5">
       {/* Tiêu đề trạm đo */}
-      <div className="flex items-center justify-between pb-3 border-b border-fb-divider">
+      <div className="flex items-center justify-between pb-3.5 border-b border-slate-100">
         <div className="flex items-center gap-2.5">
           <div className="w-10 h-10 rounded-full bg-emerald-100 flex items-center justify-center text-emerald-700 font-bold shadow-inner">
             <Activity className="w-5 h-5 animate-pulse" />

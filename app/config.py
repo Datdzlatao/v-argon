@@ -21,6 +21,9 @@ class Settings(BaseSettings):
     GEMINI_API_KEY: str = ""
     GEMINI_MODEL: str = "gemini-2.0-flash"
 
+    # Tavily Search API settings (optional; falls back to Gemini Google Search Grounding)
+    TAVILY_API_KEY: str = ""
+
     # Standalone AI Vision Engine settings
     VISION_ENGINE_URL: str = "http://localhost:8001"
 
@@ -66,6 +69,14 @@ class Settings(BaseSettings):
         return bool(
             self.PINECONE_API_KEY
             and "your-pinecone" not in self.PINECONE_API_KEY
+        )
+
+    @property
+    def is_tavily_configured(self) -> bool:
+        """Check whether Tavily API key has been configured."""
+        return bool(
+            self.TAVILY_API_KEY
+            and "your-tavily" not in self.TAVILY_API_KEY
         )
 
 

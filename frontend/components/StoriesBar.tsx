@@ -1,7 +1,7 @@
 'use client';
 
 import React from 'react';
-import { Plus, AlertCircle, Thermometer, Droplets } from 'lucide-react';
+import { Plus, AlertCircle, Thermometer, Droplets, PawPrint, Sprout } from 'lucide-react';
 
 interface PenStory {
   id: string;
@@ -26,92 +26,113 @@ export default function StoriesBar({
   onOpenAddPenModal,
 }: StoriesBarProps) {
   return (
-    <div className="w-full overflow-x-auto pb-2 scrollbar-none">
-      <div className="flex gap-2.5 min-w-max">
-        {/* Thẻ tạo khu vực mới */}
-        <div
+    <div className="w-full overflow-x-auto pb-1 no-scrollbar">
+      <div className="flex gap-3 min-w-max">
+        {/* Add Area Card */}
+        <button
+          type="button"
           onClick={onOpenAddPenModal}
-          className="relative w-28 sm:w-32 h-44 sm:h-48 rounded-2xl bg-fb-card shadow-fb-card border border-fb-divider overflow-hidden cursor-pointer group hover:shadow-md transition flex flex-col justify-between"
+          className="relative w-32 sm:w-36 h-40 rounded-2xl bg-white shadow-sm border border-dashed border-emerald-300 overflow-hidden cursor-pointer group hover:border-emerald-500 hover:shadow-md transition flex flex-col items-center justify-center gap-2 p-3 text-center shrink-0"
           title="Thêm khu vực chuồng trại hoặc vườn cây mới"
         >
-          <div className="h-3/4 bg-gradient-to-b from-emerald-100 to-green-50 flex items-center justify-center group-hover:scale-105 transition duration-300">
-            <div className="w-10 h-10 rounded-full bg-emerald-600 text-white flex items-center justify-center shadow-lg">
-              <Plus className="w-6 h-6" />
-            </div>
+          <div className="w-10 h-10 rounded-xl bg-emerald-50 text-emerald-700 group-hover:bg-emerald-700 group-hover:text-white flex items-center justify-center transition">
+            <Plus className="w-5 h-5" />
           </div>
-          <div className="p-2 text-center bg-fb-card relative">
-            <span className="text-xs font-bold text-fb-text block truncate">Thêm Khu Vực</span>
-            <span className="text-[10px] text-fb-muted">Khu vực mới</span>
+          <div>
+            <span className="text-xs font-bold text-slate-800 block whitespace-nowrap">
+              Thêm Khu Vực
+            </span>
+            <span className="text-[11px] text-slate-500 block mt-0.5 whitespace-nowrap">
+              Chuồng / Vườn mới
+            </span>
           </div>
-        </div>
+        </button>
 
-        {/* Các thẻ xem nhanh từng khu vực chuồng/vườn */}
+        {/* Area Quick-Switch Cards */}
         {pens.map((pen) => {
           const isSelected = pen.id === currentPenId;
           const hasAlert = pen.hasAlert;
+          const isCultivation = pen.type === 'cultivation';
+          const bgImage = isCultivation
+            ? '/images/farm-greenhouse.jpg'
+            : '/images/farm-livestock.jpg';
 
           return (
-            <div
+            <button
+              type="button"
               key={pen.id}
               onClick={() => onSelectPen(pen.id)}
-              className={`relative w-28 sm:w-32 h-44 sm:h-48 rounded-2xl shadow-fb-card border overflow-hidden cursor-pointer group transition duration-200 select-none ${
-                isSelected
-                  ? 'ring-2 ring-emerald-500 border-emerald-400'
-                  : 'border-fb-divider hover:shadow-md'
+              className={`relative w-36 sm:w-40 h-40 rounded-2xl shadow-sm border overflow-hidden cursor-pointer group transition duration-200 select-none text-left shrink-0 ${
+                hasAlert
+                  ? 'ring-2 ring-rose-500 border-rose-400'
+                  : isSelected
+                  ? 'ring-2 ring-emerald-600 border-emerald-500 shadow-md'
+                  : 'border-slate-200/90 hover:shadow-md'
               }`}
             >
-              {/* Nền gradient mô phỏng trạng thái chuồng */}
+              <img
+                src={bgImage}
+                alt={pen.name}
+                className="absolute inset-0 w-full h-full object-cover group-hover:scale-105 transition duration-500"
+              />
               <div
-                className={`absolute inset-0 bg-gradient-to-b ${
+                className={`absolute inset-0 ${
                   hasAlert
-                    ? 'from-red-600 via-rose-800 to-slate-900'
+                    ? 'bg-gradient-to-t from-rose-950/90 via-rose-950/35 to-black/20'
                     : isSelected
-                    ? 'from-emerald-700 via-teal-800 to-slate-900'
-                    : 'from-slate-700 via-slate-800 to-slate-950'
-                } group-hover:scale-105 transition duration-300`}
-              >
-                <div className="absolute inset-0 opacity-20 bg-[radial-gradient(#fff_1px,transparent_1px)] [background-size:12px_12px]" />
-              </div>
+                    ? 'bg-gradient-to-t from-emerald-950/90 via-slate-900/30 to-black/15'
+                    : 'bg-gradient-to-t from-slate-950/85 via-slate-900/25 to-black/10'
+                }`}
+              />
 
-              {/* Huy hiệu loài nuôi hoặc loại vườn */}
-              <div className="absolute top-2.5 left-2.5 z-10">
+              {/* Top Icon & Status Badge */}
+              <div className="absolute top-2.5 left-2.5 right-2.5 z-10 flex items-center justify-between gap-1">
                 <div
-                  className={`w-9 h-9 rounded-full p-0.5 flex items-center justify-center shadow ${
+                  className={`w-7 h-7 rounded-lg flex items-center justify-center shadow-sm backdrop-blur-md ${
                     hasAlert
-                      ? 'bg-red-500 alert-pulse'
+                      ? 'bg-rose-600 text-white'
                       : isSelected
-                      ? 'bg-emerald-400'
-                      : 'bg-white/70'
+                      ? 'bg-emerald-600 text-white'
+                      : 'bg-white/90 text-slate-800'
                   }`}
                 >
-                  <div className="w-full h-full rounded-full bg-slate-900 text-white flex items-center justify-center font-bold text-xs">
-                    {pen.type === 'cultivation' ? '🌿' : '🐖'}
-                  </div>
+                  {isCultivation ? (
+                    <Sprout className="w-4 h-4" />
+                  ) : (
+                    <PawPrint className="w-4 h-4" />
+                  )}
                 </div>
+
+                {hasAlert ? (
+                  <span className="inline-flex items-center gap-1 text-[10px] font-bold text-white bg-rose-600/95 px-2 py-0.5 rounded-full whitespace-nowrap shadow-sm">
+                    <AlertCircle className="w-2.5 h-2.5" />
+                    Cảnh báo
+                  </span>
+                ) : isSelected ? (
+                  <span className="text-[10px] font-bold text-emerald-950 bg-emerald-300/95 px-2 py-0.5 rounded-full whitespace-nowrap shadow-sm">
+                    Đang xem
+                  </span>
+                ) : null}
               </div>
 
-              {/* Thông tin nhiệt độ & độ ẩm tóm tắt */}
-              <div className="absolute inset-x-0 bottom-0 p-2.5 z-10 bg-gradient-to-t from-black/90 via-black/50 to-transparent">
-                {hasAlert && (
-                  <span className="inline-flex items-center gap-1 text-[10px] font-bold text-red-300 bg-red-950/80 px-1.5 py-0.5 rounded-full mb-1 border border-red-500/50">
-                    <AlertCircle className="w-3 h-3 text-red-400" /> Cảnh Báo
-                  </span>
-                )}
+              {/* Bottom Metrics */}
+              <div className="absolute inset-x-0 bottom-0 p-2.5 z-10">
+                <p className="text-xs font-bold text-white truncate drop-shadow-sm">
+                  {pen.name}
+                </p>
 
-                <p className="text-xs font-bold text-white truncate drop-shadow-sm">{pen.name}</p>
-
-                <div className="flex items-center gap-2 mt-1 text-[10px] text-slate-300">
-                  <span className="flex items-center gap-0.5">
-                    <Thermometer className="w-2.5 h-2.5 text-orange-400" />
+                <div className="flex items-center gap-2.5 mt-1 text-[11px] font-medium text-slate-200 whitespace-nowrap">
+                  <span className="inline-flex items-center gap-1">
+                    <Thermometer className="w-3 h-3 text-amber-300 shrink-0" />
                     {pen.temp !== undefined ? `${pen.temp}°C` : '--'}
                   </span>
-                  <span className="flex items-center gap-0.5">
-                    <Droplets className="w-2.5 h-2.5 text-blue-400" />
+                  <span className="inline-flex items-center gap-1">
+                    <Droplets className="w-3 h-3 text-sky-300 shrink-0" />
                     {pen.hum !== undefined ? `${pen.hum}%` : '--'}
                   </span>
                 </div>
               </div>
-            </div>
+            </button>
           );
         })}
       </div>

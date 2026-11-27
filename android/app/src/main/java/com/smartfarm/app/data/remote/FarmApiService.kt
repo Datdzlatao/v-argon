@@ -101,4 +101,24 @@ interface FarmApiService {
         @Path("pen_id") penId: String,
         @Body updates: Map<String, String>
     ): Response<JsonObject>
+
+    @GET("/api/office/records")
+    suspend fun getOfficeRecords(
+        @Query("limit") limit: Int = 20
+    ): Response<JsonObject>
+
+    @POST("/api/office/records")
+    suspend fun createOfficeRecord(
+        @Body body: Map<String, @JvmSuppressWildcards Any>
+    ): Response<JsonObject>
+
+    @DELETE("/api/office/records/{record_id}")
+    suspend fun deleteOfficeRecord(
+        @Path("record_id") recordId: String
+    ): Response<JsonObject>
+
+    @POST("/api/office/summarize")
+    suspend fun summarizeOffice(
+        @Body body: Map<String, @JvmSuppressWildcards Any>
+    ): Response<JsonObject>
 }

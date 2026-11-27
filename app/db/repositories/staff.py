@@ -14,6 +14,7 @@ _STAFF_FALLBACK = [
         "pen_id": "123",
         "phone": "0901234567",
         "avatar_url": None,
+        "daily_wage": 400000,
         "created_at": "2026-08-01T08:00:00Z",
     },
     {
@@ -23,6 +24,7 @@ _STAFF_FALLBACK = [
         "pen_id": "PEN-ISO-01",
         "phone": "0912345678",
         "avatar_url": None,
+        "daily_wage": 350000,
         "created_at": "2026-08-05T08:00:00Z",
     },
     {
@@ -32,6 +34,7 @@ _STAFF_FALLBACK = [
         "pen_id": "PEN-A02",
         "phone": "0923456789",
         "avatar_url": None,
+        "daily_wage": 300000,
         "created_at": "2026-08-10T08:00:00Z",
     },
     {
@@ -41,6 +44,7 @@ _STAFF_FALLBACK = [
         "pen_id": "PEN-B01",
         "phone": "0934567890",
         "avatar_url": None,
+        "daily_wage": 300000,
         "created_at": "2026-08-15T08:00:00Z",
     },
 ]
@@ -81,6 +85,10 @@ class StaffRepository:
                 query = query.eq("pen_id", str(pen_id).strip())
             response = query.order("id").execute()
             if response.data:
+                fallback_wages = {s["id"]: s.get("daily_wage", 300000) for s in _STAFF_FALLBACK}
+                for row in response.data:
+                    if "daily_wage" not in row or row["daily_wage"] is None:
+                        row["daily_wage"] = fallback_wages.get(row.get("id"), 300000)
                 return response.data
         except Exception as e:
             logger.warning(f"Error fetching staff from Supabase: {e}. Using fallback.")
@@ -115,6 +123,7 @@ class StaffRepository:
         pen_id: str = "123",
         phone: Optional[str] = None,
         avatar_url: Optional[str] = None,
+        daily_wage: float = 300000,
     ) -> dict[str, Any]:
         """Register a new staff member."""
         clean_id = staff_id.strip()
@@ -125,6 +134,7 @@ class StaffRepository:
             "pen_id": pen_id.strip() if pen_id else "123",
             "phone": phone,
             "avatar_url": avatar_url,
+            "daily_wage": int(daily_wage),
             "created_at": datetime.now(timezone.utc).isoformat(),
         }
 
@@ -236,3 +246,54 @@ class StaffRepository:
 
         history = [l for l in _ATTENDANCE_FALLBACK if not staff_id or l.get("staff_id") == staff_id]
         return history[:limit]
+
+    def get_attendance_by_date(self, target_date: str, pen_id: Optional[str] = None) -> list[dict[str, Any]]:
+        """Get all attendance logs for a specific YYYY-MM-DD date."""
+        try:
+            query = (
+                self.client.table(self._attendance_table)
+                .select("*")
+                .gte("created_at", f"{target_date}T00:00:00")
+                .lte("created_at", f"{target_date}T23:59:59+23:59")
+            )
+            if pen_id:
+                query = query.eq("pen_id", str(pen_id).strip())
+            response = query.order("created_at", desc=False).execute()
+            if response.data is not None:
+                return response.data
+        except Exception as e:
+            logger.warning(f"Error fetching attendance for {target_date}: {e}")
+
+        logs = []
+        for log in _ATTENDANCE_FALLBACK:
+            if str(log.get("created_at", "")).startswith(target_date):
+                if not pen_id or log.get("pen_id") == pen_id:
+                    logs.append(log)
+        return logs
+
+    def update_staff_wage(self, staff_id: str, daily_wage: float) -> Optional[dict[str, Any]]:
+        """Update `daily_wage` for a staff member in `staff` table."""
+        clean_id = staff_id.strip()
+        wage_int = max(0, int(daily_wage))
+        found = False
+        for s in _STAFF_FALLBACK:
+            if s.get("id") == clean_id:
+                s["daily_wage"] = wage_int
+                found = True
+        if not found:
+            _STAFF_FALLBACK.append({"id": clean_id, "daily_wage": wage_int})
+        try:
+            res = (
+                self.client.table(self._staff_table)
+                .update({"daily_wage": wage_int})
+                .eq("id", clean_id)
+                .execute()
+            )
+            if res.data and len(res.data) > 0:
+                return res.data[0]
+        except Exception as e:
+            logger.warning(f"Could not update daily_wage in Supabase for {clean_id}: {e}")
+        staff_obj = self.get_by_id(clean_id)
+        if staff_obj is not None:
+            staff_obj["daily_wage"] = wage_int
+        return staff_obj

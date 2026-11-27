@@ -31,38 +31,38 @@ export default function FeedAlertPinned({
   const isLivestock = currentMode === 'livestock';
 
   return (
-    <div className="bg-gradient-to-r from-red-600 via-rose-600 to-orange-600 rounded-2xl shadow-lg p-0.5 alert-pulse mb-4">
-      <div className="bg-fb-card rounded-[14px] p-4 text-fb-text">
-        {/* Tiêu đề thông báo cảnh báo */}
-        <div className="flex items-start justify-between">
-          <div className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-full bg-red-100 flex items-center justify-center text-red-600 font-bold shadow-inner shrink-0">
-              <ShieldAlert className="w-6 h-6 animate-pulse" />
-            </div>
-            <div>
-              <div className="flex items-center gap-1.5 flex-wrap">
-                <span className="font-bold text-sm text-red-600 uppercase tracking-wider">
-                  ⚠️ Báo Động Môi Trường Khẩn Cấp
-                </span>
-                <span className="text-xs bg-red-100 text-red-700 px-2 py-0.5 rounded-full font-bold">
-                  {isLivestock ? 'Khí Hậu Chuồng Nuôi' : 'Vi Khí Hậu Vườn Trồng'}
-                </span>
-              </div>
-              <p className="text-xs text-fb-muted mt-0.5">
-                Tại <strong className="text-fb-text">{penName}</strong> ({penId}) • Vừa phát hiện
-              </p>
-            </div>
+    <div className="bg-white rounded-2xl shadow-sm border-2 border-rose-300 p-4 sm:p-5 text-slate-900">
+      {/* Tiêu đề thông báo cảnh báo */}
+      <div className="flex items-start justify-between gap-3">
+        <div className="flex items-center gap-3 min-w-0">
+          <div className="w-10 h-10 rounded-xl bg-rose-100 flex items-center justify-center text-rose-600 shrink-0">
+            <ShieldAlert className="w-5 h-5" />
           </div>
-
-          <button
-            onClick={onDismiss}
-            title="Tạm ẩn cảnh báo này"
-            className="text-fb-muted hover:text-fb-text p-1 text-xs rounded hover:bg-fb-hover cursor-pointer"
-            aria-label="Tạm ẩn cảnh báo"
-          >
-            <BellOff className="w-4 h-4" />
-          </button>
+          <div className="min-w-0">
+            <div className="flex items-center gap-2 flex-wrap">
+              <span className="font-extrabold text-sm text-rose-700 uppercase tracking-wide whitespace-nowrap">
+                Cảnh Báo Môi Trường Khẩn Cấp
+              </span>
+              <span className="text-[11px] bg-rose-50 text-rose-700 border border-rose-200 px-2 py-0.5 rounded-full font-bold whitespace-nowrap">
+                {isLivestock ? 'Khí Hậu Chuồng Nuôi' : 'Vi Khí Hậu Vườn Trồng'}
+              </span>
+            </div>
+            <p className="text-xs text-slate-500 mt-0.5 truncate">
+              Tại <strong className="text-slate-800">{penName}</strong> ({penId}) • Vừa phát hiện
+            </p>
+          </div>
         </div>
+
+        <button
+          type="button"
+          onClick={onDismiss}
+          title="Tạm ẩn cảnh báo này"
+          className="text-slate-400 hover:text-slate-700 p-1.5 rounded-lg hover:bg-slate-100 cursor-pointer shrink-0"
+          aria-label="Tạm ẩn cảnh báo"
+        >
+          <BellOff className="w-4 h-4" />
+        </button>
+      </div>
 
         {/* Nội dung chi tiết chỉ số vượt ngưỡng */}
         <div className="mt-3 bg-red-50 border border-red-200 rounded-xl p-3 text-sm">
@@ -131,9 +131,8 @@ export default function FeedAlertPinned({
             </button>
           </div>
 
-          <span className="text-[11px] text-fb-muted">Khuyến nghị xử lý khẩn cấp</span>
+          <span className="text-[11px] text-slate-500 whitespace-nowrap">Khuyến nghị xử lý khẩn cấp</span>
         </div>
-      </div>
     </div>
   );
 }

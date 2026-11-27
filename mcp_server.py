@@ -21,6 +21,8 @@ from app.mcp.mcp_server import (
     get_low_stock_inventory,
     get_animals_attention,
     get_crops_harvest,
+    google_web_search,
+    search_and_analyze_product_price,
 )
 
 if __name__ == "__main__":

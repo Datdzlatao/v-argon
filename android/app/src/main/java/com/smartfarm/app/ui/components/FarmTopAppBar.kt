@@ -15,6 +15,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.smartfarm.app.ui.theme.*
@@ -28,7 +29,8 @@ fun FarmTopAppBar(
     isMuted: Boolean,
     onToggleMute: () -> Unit,
     userEmail: String?,
-    onLogout: () -> Unit
+    onLogout: () -> Unit,
+    onOpenExtendedModules: () -> Unit = {}
 ) {
     var showMenu by remember { mutableStateOf(false) }
 
@@ -76,9 +78,11 @@ fun FarmTopAppBar(
                             horizontalArrangement = Arrangement.spacedBy(6.dp)
                         ) {
                             Text(
-                                text = "Nông Trại Thông Minh",
+                                text = "V-ARGON",
                                 style = MaterialTheme.typography.titleMedium,
-                                fontWeight = FontWeight.Bold,
+                                fontWeight = FontWeight.ExtraBold,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
                                 color = FarmForegroundLight
                             )
                             // Đèn báo kết nối hệ thống
@@ -102,6 +106,21 @@ fun FarmTopAppBar(
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(6.dp)
                 ) {
+                    // Nút mở Quản Lý Chung (Thu Chi, Office, Nhân Sự, QR, Giá)
+                    IconButton(
+                        onClick = onOpenExtendedModules,
+                        modifier = Modifier
+                            .size(38.dp)
+                            .clip(CircleShape)
+                            .background(FarmPrimary.copy(alpha = 0.10f))
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.WorkOutline,
+                            contentDescription = "Quản Lý Chung",
+                            tint = FarmPrimary,
+                            modifier = Modifier.size(20.dp)
+                        )
+                    }
                     // Nút tắt/bật chuông cảnh báo
                     IconButton(
                         onClick = onToggleMute,
@@ -194,7 +213,7 @@ fun FarmTopAppBar(
                 horizontalArrangement = Arrangement.spacedBy(10.dp)
             ) {
                 ModeChip(
-                    title = "Chăn Nuôi Gia Súc",
+                    title = "Chăn Nuôi",
                     icon = "🐖",
                     isSelected = currentMode == "livestock",
                     onClick = { onModeChange("livestock") },
@@ -202,7 +221,7 @@ fun FarmTopAppBar(
                 )
 
                 ModeChip(
-                    title = "Trồng Trọt Cây Trồng",
+                    title = "Trồng Trọt",
                     icon = "🌿",
                     isSelected = currentMode == "cultivation",
                     onClick = { onModeChange("cultivation") },
@@ -243,6 +262,9 @@ fun ModeChip(
             Text(
                 text = title,
                 style = MaterialTheme.typography.labelLarge,
+                maxLines = 1,
+                softWrap = false,
+                overflow = TextOverflow.Ellipsis,
                 fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
                 color = if (isSelected) FarmPrimary else FarmTextMutedLight
             )

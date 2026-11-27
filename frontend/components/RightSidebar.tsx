@@ -48,28 +48,29 @@ export default function RightSidebar({
   const currentPenLabel = penName || (isLivestock ? 'Chuồng nuôi đang chọn' : 'Vườn trồng đang chọn');
 
   return (
-    <aside className="w-64 lg:w-72 shrink-0 hidden xl:block space-y-4">
+    <aside className="hidden xl:block xl:col-span-3 space-y-4 sticky top-20 self-start">
       {/* Khối điều khiển thiết bị điện */}
-      <div className="bg-fb-card rounded-2xl p-4 shadow-fb-card border border-fb-divider">
-        <div className="flex items-center justify-between pb-2 border-b border-fb-divider mb-3">
-          <div className="flex items-center gap-1.5">
-            <Cpu className="w-4 h-4 text-emerald-600" />
-            <h4 className="font-bold text-sm text-fb-text">
-              {isLivestock ? 'Thiết Bị Chuồng Trại' : 'Thiết Bị Vườn Trồng'}
+      <div className="bg-white rounded-2xl p-4 shadow-sm border border-slate-200/80">
+        <div className="flex items-center justify-between pb-2.5 border-b border-slate-100 mb-3 gap-2">
+          <div className="flex items-center gap-1.5 min-w-0">
+            <Cpu className="w-4 h-4 text-emerald-700 shrink-0" />
+            <h4 className="font-bold text-sm text-slate-900 truncate">
+              {isLivestock ? 'Thiết Bị Chuồng' : 'Thiết Bị Vườn'}
             </h4>
           </div>
 
           <button
+            type="button"
             onClick={onOpenAddDeviceModal}
-            className="text-[11px] font-bold text-emerald-700 hover:text-emerald-800 flex items-center gap-0.5 hover:underline cursor-pointer"
+            className="text-[11px] font-bold text-emerald-700 hover:text-emerald-800 flex items-center gap-0.5 whitespace-nowrap hover:underline cursor-pointer shrink-0"
           >
             <Plus className="w-3.5 h-3.5" />
             Thêm Mới
           </button>
         </div>
 
-        <p className="text-[11px] text-fb-muted mb-3 truncate">
-          Điều khiển thiết bị tại: <strong className="text-fb-text">{currentPenLabel}</strong>
+        <p className="text-[11px] text-slate-500 mb-3 truncate">
+          Khu vực: <strong className="text-slate-800">{currentPenLabel}</strong>
         </p>
 
         {devices.length === 0 ? (

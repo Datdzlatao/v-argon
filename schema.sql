@@ -60,6 +60,7 @@ CREATE TABLE IF NOT EXISTS public.health_logs (
     created_at TIMESTAMPTZ DEFAULT now()
 );
 
+
 CREATE TABLE IF NOT EXISTS public.weight_logs (
     id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
     animal_id TEXT REFERENCES public.animals(id) ON DELETE CASCADE,
@@ -94,6 +95,7 @@ CREATE TABLE IF NOT EXISTS public.crop_growth_logs (
     created_at TIMESTAMPTZ DEFAULT now()
 );
 
+
 CREATE TABLE IF NOT EXISTS public.crop_care_logs (
     id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
     crop_id BIGINT REFERENCES public.crops(id) ON DELETE CASCADE,
@@ -101,6 +103,7 @@ CREATE TABLE IF NOT EXISTS public.crop_care_logs (
     note TEXT,
     created_at TIMESTAMPTZ DEFAULT now()
 );
+
 
 CREATE TABLE IF NOT EXISTS public.inventory (
     id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
@@ -124,6 +127,7 @@ CREATE TABLE IF NOT EXISTS public.inventory_logs (
     created_at TIMESTAMPTZ DEFAULT now()
 );
 
+
 CREATE TABLE IF NOT EXISTS public.usage_logs (
     id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
     user_id UUID DEFAULT auth.uid(),
@@ -132,6 +136,7 @@ CREATE TABLE IF NOT EXISTS public.usage_logs (
     note TEXT,
     created_at TIMESTAMPTZ DEFAULT now()
 );
+
 
 -- Hai bảng quan trọng cho AI Agent (trước đây bị thiếu trong database.sql):
 CREATE TABLE IF NOT EXISTS public.alerts (
@@ -153,6 +158,7 @@ CREATE TABLE IF NOT EXISTS public.schedules (
     created_at TIMESTAMPTZ DEFAULT now()
 );
 
+
 -- Bảng lưu lịch sử chat của từng người dùng & chuồng
 CREATE TABLE IF NOT EXISTS public.chat_messages (
     id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
@@ -172,8 +178,11 @@ CREATE TABLE IF NOT EXISTS public.staff (
     pen_id TEXT REFERENCES public.pens(id) ON DELETE SET NULL,
     phone TEXT,
     avatar_url TEXT,
+    daily_wage BIGINT DEFAULT 300000,
     created_at TIMESTAMPTZ DEFAULT now()
 );
+
+ALTER TABLE IF EXISTS public.staff ADD COLUMN IF NOT EXISTS daily_wage BIGINT DEFAULT 300000;
 
 CREATE TABLE IF NOT EXISTS public.staff_attendance (
     id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
@@ -185,6 +194,89 @@ CREATE TABLE IF NOT EXISTS public.staff_attendance (
     confidence DOUBLE PRECISION DEFAULT 1.0,
     is_real BOOLEAN DEFAULT true,
     note TEXT,
+    created_at TIMESTAMPTZ DEFAULT now()
+);
+
+-- Phân hệ Quản Lý Chung (Thu Chi, NextFarm Office, Nhân Sự & Khoán, QR Video) theo từng tài khoản
+CREATE TABLE IF NOT EXISTS public.farm_finances (
+    id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    user_id UUID DEFAULT auth.uid(),
+    type TEXT NOT NULL CHECK (type IN ('thu', 'chi')),
+    title TEXT NOT NULL,
+    amount BIGINT NOT NULL DEFAULT 0,
+    debt_note TEXT DEFAULT '',
+    record_date TEXT DEFAULT '',
+    created_at TIMESTAMPTZ DEFAULT now()
+);
+
+CREATE TABLE IF NOT EXISTS public.farm_office_records (
+    id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    user_id UUID DEFAULT auth.uid(),
+    code TEXT NOT NULL,
+    item TEXT NOT NULL,
+    status TEXT DEFAULT 'Mới tạo',
+    note TEXT DEFAULT '',
+    created_at TIMESTAMPTZ DEFAULT now()
+);
+
+-- Bảng NextFarm Office: Agent tổng hợp cuối ngày (Thu chi, Xuất nhập kho, Xuất chuồng, Thu hoạch) theo giờ trong cột timestampt
+CREATE TABLE IF NOT EXISTS public.office (
+    id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    user_id UUID DEFAULT auth.uid(),
+    report_date DATE NOT NULL DEFAULT CURRENT_DATE,
+    hour_slot TEXT NOT NULL DEFAULT '',
+    category TEXT NOT NULL DEFAULT 'tong_ket',
+    code TEXT NOT NULL DEFAULT '',
+    item TEXT NOT NULL,
+    quantity_or_amount DOUBLE PRECISION DEFAULT 0,
+    unit TEXT DEFAULT '',
+    status TEXT DEFAULT 'Đã tổng hợp',
+    note TEXT DEFAULT '',
+    source_table TEXT DEFAULT '',
+    timestampt TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS idx_office_report_date_timestampt
+ON public.office (report_date DESC, timestampt DESC);
+
+CREATE TABLE IF NOT EXISTS public.farm_automation_rules (
+    id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    user_id UUID DEFAULT auth.uid(),
+    name TEXT NOT NULL,
+    condition TEXT NOT NULL,
+    action TEXT NOT NULL,
+    enabled BOOLEAN DEFAULT true,
+    created_at TIMESTAMPTZ DEFAULT now()
+);
+
+CREATE TABLE IF NOT EXISTS public.farm_hr_leaves (
+    id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    user_id UUID DEFAULT auth.uid(),
+    staff_name TEXT NOT NULL,
+    reason TEXT NOT NULL,
+    leave_date TEXT DEFAULT '',
+    status TEXT DEFAULT 'pending' CHECK (status IN ('pending', 'approved', 'rejected')),
+    created_at TIMESTAMPTZ DEFAULT now()
+);
+
+CREATE TABLE IF NOT EXISTS public.farm_hr_quotas (
+    id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    user_id UUID DEFAULT auth.uid(),
+    staff_name TEXT NOT NULL,
+    task_title TEXT NOT NULL,
+    completed_qty DOUBLE PRECISION DEFAULT 0,
+    target_qty DOUBLE PRECISION DEFAULT 100,
+    unit TEXT DEFAULT 'đơn vị',
+    created_at TIMESTAMPTZ DEFAULT now()
+);
+
+CREATE TABLE IF NOT EXISTS public.farm_video_qrs (
+    id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    user_id UUID DEFAULT auth.uid(),
+    product_name TEXT NOT NULL,
+    lot_code TEXT NOT NULL,
+    video_url TEXT NOT NULL,
+    note TEXT DEFAULT '',
     created_at TIMESTAMPTZ DEFAULT now()
 );
 
@@ -227,7 +319,9 @@ BEGIN
           AND tablename IN ('pens', 'env_logs', 'devices', 'animals', 'health_logs', 
                             'weight_logs', 'feed_logs', 'crops', 'crop_growth_logs', 
                             'crop_care_logs', 'inventory', 'inventory_logs', 'usage_logs', 
-                            'alerts', 'schedules', 'field', 'chat_messages', 'staff', 'staff_attendance')
+                            'alerts', 'schedules', 'field', 'chat_messages', 'staff', 'staff_attendance',
+                            'farm_finances', 'farm_office_records', 'office', 'farm_automation_rules',
+                            'farm_hr_leaves', 'farm_hr_quotas', 'farm_video_qrs')
     LOOP
         EXECUTE format('ALTER TABLE public.%I ENABLE ROW LEVEL SECURITY;', tbl);
         EXECUTE format('DROP POLICY IF EXISTS allow_all_backend_ops ON public.%I;', tbl);

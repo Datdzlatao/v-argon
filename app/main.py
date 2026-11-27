@@ -9,6 +9,7 @@ from datetime import date
 from typing import Any, Optional, Dict
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException, Query, File, UploadFile, Form
+from pydantic import BaseModel
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse
 
@@ -25,6 +26,7 @@ from app.db.repositories.crops import CropsRepository
 from app.db.repositories.feed_logs import FeedLogsRepository
 from app.db.repositories.chat_history import ChatHistoryRepository
 from app.db.repositories.staff import StaffRepository
+from app.db.repositories.office import OfficeRepository
 from app.services.face_service import face_service
 from app.models.schemas import (
     AgentChatRequest,
@@ -55,7 +57,12 @@ from app.models.schemas import (
 from app.services.agent_service import agent_service
 from app.api.websocket_manager import ws_manager
 from app.background.watcher import start_env_watcher, stop_env_watcher
-from app.background.scheduler import start_scheduler, stop_scheduler, trigger_daily_briefing
+from app.background.scheduler import (
+    start_scheduler,
+    stop_scheduler,
+    trigger_daily_briefing,
+    trigger_end_of_day_office_summary,
+)
 
 logging.basicConfig(
     level=logging.INFO,
@@ -114,6 +121,7 @@ crops_repo = CropsRepository()
 feed_repo = FeedLogsRepository()
 chat_history_repo = ChatHistoryRepository()
 staff_repo = StaffRepository()
+office_repo = OfficeRepository()
 
 
 # ====================================================================
@@ -447,6 +455,15 @@ async def get_low_stock():
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@app.get("/api/inventory/logs", tags=["Inventory"])
+async def get_inventory_logs(limit: int = 100, action_type: Optional[str] = None):
+    """List warehouse import/export and barn export logs."""
+    try:
+        return inventory_repo.list_logs(limit=limit, action_type=action_type)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @app.get("/api/schedules", tags=["Schedules"])
 async def get_schedules():
     """List pending and upcoming schedules."""
@@ -669,6 +686,118 @@ async def trigger_briefing():
 
 
 # ====================================================================
+# V-ARGON OFFICE — END-OF-DAY SUMMARY AGENT & TABLE MANAGEMENT
+# ====================================================================
+
+class OfficeSummarizeRequest(BaseModel):
+    target_date: Optional[str] = None
+    user_id: Optional[str] = None
+
+
+class OfficeRecordCreate(BaseModel):
+    user_id: Optional[str] = None
+    report_date: Optional[str] = None
+    hour_slot: Optional[str] = None
+    category: str = "thu_chi"
+    code: str = ""
+    item: str
+    quantity_or_amount: float = 0.0
+    unit: str = ""
+    status: str = "Ghi nhận thủ công"
+    note: str = ""
+    timestampt: Optional[str] = None
+
+
+class OfficeRecordUpdate(BaseModel):
+    code: Optional[str] = None
+    item: Optional[str] = None
+    category: Optional[str] = None
+    quantity_or_amount: Optional[float] = None
+    unit: Optional[str] = None
+    status: Optional[str] = None
+    note: Optional[str] = None
+    hour_slot: Optional[str] = None
+
+
+@app.get("/api/office/records", tags=["V-Argon Office"])
+async def get_office_records(
+    report_date: Optional[str] = Query(default=None, description="Lọc theo ngày YYYY-MM-DD"),
+    category: Optional[str] = Query(default=None, description="Lọc theo phân loại (thu_chi, xuat_nhap_kho, xuat_chuong, thu_hoach, tong_ket)"),
+    user_id: Optional[str] = Query(default=None),
+    limit: int = Query(default=200, ge=1, le=500),
+):
+    """Lấy danh sách bản ghi bảng `office` (tổng hợp cuối ngày theo giờ trong cột `timestampt`)."""
+    try:
+        rows = office_repo.list_records(
+            report_date=report_date,
+            category=category,
+            user_id=user_id,
+            limit=limit,
+        )
+        return {
+            "status": "success",
+            "storage_mode": office_repo.storage_mode,
+            "count": len(rows),
+            "records": rows,
+        }
+    except Exception as e:
+        logger.error(f"Office list error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/office/summarize", tags=["V-Argon Office"])
+async def trigger_office_summary(payload: Optional[OfficeSummarizeRequest] = None):
+    """Kích hoạt Agent tổng hợp cuối ngày (Thu chi, Xuất nhập kho, Xuất chuồng, Thu hoạch) và ghi vào bảng `office`."""
+    try:
+        target_date = payload.target_date if payload else None
+        user_id = payload.user_id if payload else None
+        result = await trigger_end_of_day_office_summary(target_date=target_date, user_id=user_id)
+        return result
+    except Exception as e:
+        logger.error(f"Office summarize error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/office/records", tags=["V-Argon Office"])
+async def create_office_record(payload: OfficeRecordCreate):
+    """Thêm bản ghi thủ công vào bảng `office`."""
+    try:
+        data = payload.model_dump()
+        data["source_table"] = "manual"
+        created = office_repo.create_record(data)
+        return {"status": "success", "storage_mode": office_repo.storage_mode, "record": created}
+    except Exception as e:
+        logger.error(f"Office create error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.patch("/api/office/records/{record_id}", tags=["V-Argon Office"])
+async def update_office_record(record_id: int, payload: OfficeRecordUpdate):
+    """Cập nhật bản ghi trong bảng `office`."""
+    try:
+        updated = office_repo.update_record(record_id, payload.model_dump(exclude_none=True))
+        if not updated:
+            raise HTTPException(status_code=404, detail="Không tìm thấy bản ghi office.")
+        return {"status": "success", "storage_mode": office_repo.storage_mode, "record": updated}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Office update error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.delete("/api/office/records/{record_id}", tags=["V-Argon Office"])
+async def delete_office_record(record_id: int):
+    """Xóa bản ghi trong bảng `office`."""
+    try:
+        office_repo.delete_record(record_id)
+        return {"status": "success", "storage_mode": office_repo.storage_mode}
+    except Exception as e:
+        logger.error(f"Office delete error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ====================================================================
 # RAG AGRICULTURAL KNOWLEDGE & DISEASE DIAGNOSIS ENDPOINTS (STEM INTEGRATION)
 # ====================================================================
 
@@ -847,6 +976,24 @@ async def create_staff_api(payload: StaffCreate):
         )
         await ws_manager.broadcast("staff_update", {"action": "create", "staff": created})
         return {"status": "success", "staff": created}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+class StaffWageUpdate(BaseModel):
+    daily_wage: float
+
+
+@app.patch("/api/staff/{staff_id}/wage", tags=["Staff & Face Attendance"])
+async def update_staff_wage_api(staff_id: str, payload: StaffWageUpdate):
+    """Cập nhật mức tiền công ngày (`daily_wage`) cho nhân sự."""
+    try:
+        updated = staff_repo.update_staff_wage(staff_id=staff_id, daily_wage=payload.daily_wage)
+        if not updated:
+            raise HTTPException(status_code=404, detail="Không tìm thấy nhân sự.")
+        return {"status": "success", "staff": updated}
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 

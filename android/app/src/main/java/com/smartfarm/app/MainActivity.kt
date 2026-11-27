@@ -95,7 +95,8 @@ fun MainAppScaffold(viewModel: FarmViewModel) {
                     isMuted = isMuted,
                     onToggleMute = { viewModel.toggleMute() },
                     userEmail = userSession?.email,
-                    onLogout = { viewModel.logout() }
+                    onLogout = { viewModel.logout() },
+                    onOpenExtendedModules = { navigateToTab(Screen.ExtendedModules.route) }
                 )
             }
         },
@@ -156,6 +157,10 @@ fun MainAppScaffold(viewModel: FarmViewModel) {
 
             composable(Screen.Inventory.route) {
                 InventoryScreen(viewModel = viewModel)
+            }
+
+            composable(Screen.ExtendedModules.route) {
+                ExtendedModulesScreen(onBack = { navController.popBackStack() })
             }
 
             composable(Screen.AIChat.route) {

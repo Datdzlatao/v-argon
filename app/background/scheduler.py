@@ -133,12 +133,22 @@ def start_scheduler():
     global _scheduler
     if _scheduler is None:
         _scheduler = AsyncIOScheduler()
-        # Schedule daily at 07:00 AM
+        # Schedule daily morning briefing at 07:00 AM
         _scheduler.add_job(
             run_morning_briefing,
             trigger=CronTrigger(hour=7, minute=0),
             id="daily_morning_briefing",
             name="Daily Smart Farm Morning Briefing at 07:00",
+            replace_existing=True,
+        )
+        # Schedule daily V-Argon Office End-of-Day Summary Agent at 21:00
+        from app.background.office_agent import run_end_of_day_office_summary
+
+        _scheduler.add_job(
+            run_end_of_day_office_summary,
+            trigger=CronTrigger(hour=21, minute=0),
+            id="daily_end_of_day_office_summary",
+            name="Daily V-Argon Office End-of-Day Summary at 21:00",
             replace_existing=True,
         )
         _scheduler.start()
@@ -157,3 +167,13 @@ def stop_scheduler():
 async def trigger_daily_briefing() -> dict:
     """Manual trigger endpoint for testing or on-demand briefing."""
     return await run_morning_briefing()
+
+
+async def trigger_end_of_day_office_summary(
+    target_date: Optional[str] = None,
+    user_id: Optional[str] = None,
+) -> dict:
+    """Manual trigger for V-Argon Office end-of-day summary agent."""
+    from app.background.office_agent import run_end_of_day_office_summary
+
+    return await run_end_of_day_office_summary(target_date=target_date, user_id=user_id)

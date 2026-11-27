@@ -17,8 +17,10 @@ import {
   AlertCircle,
   Scissors,
   ShieldCheck,
-  Activity
+  Activity,
+  FileSpreadsheet
 } from 'lucide-react';
+import { exportTableToExcel } from '../lib/export-excel';
 import { Line } from 'react-chartjs-2';
 import {
   Chart as ChartJS,
@@ -611,6 +613,35 @@ export function ModalAddCrop({
 // ==========================================
 // 5. Modal Theo Dõi Cân Nặng (Chăn Nuôi)
 // ==========================================
+function exportGrowthLogsToExcel(
+  filenamePrefix: string,
+  sheetTitle: string,
+  targetLabel: string,
+  targetId: string,
+  valueHeader: string,
+  diffHeader: string,
+  sortedLogs: Array<{ created_at?: string; value: number }>
+) {
+  const dateSuffix = new Date().toISOString().slice(0, 10);
+  const safeId = (targetId || 'record').replace(/[^a-zA-Z0-9_-]/g, '_');
+  const safeSheet = `${sheetTitle} ${targetId}`.slice(0, 31);
+  exportTableToExcel(
+    `${filenamePrefix}-${safeId}-${dateSuffix}`,
+    safeSheet,
+    ['STT', targetLabel, valueHeader, diffHeader, 'Thời Gian'],
+    sortedLogs.map((l, idx) => {
+      const diff = idx === 0 ? '--' : Number((l.value - sortedLogs[idx - 1].value).toFixed(2));
+      return [
+        idx + 1,
+        targetId,
+        l.value,
+        diff,
+        l.created_at ? new Date(l.created_at).toLocaleString('vi-VN') : 'Gần đây',
+      ];
+    })
+  );
+}
+
 export function ModalWeightTracking({
   isOpen,
   onClose,
@@ -660,6 +691,19 @@ export function ModalWeightTracking({
     if (!newWeight) return alert('Vui lòng nhập cân nặng mới');
     await onSaveWeight(parseFloat(newWeight));
     setNewWeight('');
+  };
+
+  const handleExportExcel = () => {
+    if (sortedLogs.length === 0) return;
+    exportGrowthLogsToExcel(
+      'bieu-do-tang-trong',
+      'Tăng Trọng',
+      'Mã Thẻ Vật Nuôi',
+      animalId,
+      'Cân Nặng (kg)',
+      'Chênh Lệch (kg)',
+      sortedLogs.map((l) => ({ created_at: l.created_at, value: l.weight }))
+    );
   };
 
   return (
@@ -721,7 +765,19 @@ export function ModalWeightTracking({
 
         {/* Lịch sử các lần cân */}
         <div className="max-h-40 overflow-y-auto space-y-1.5 pr-1">
-          <span className="text-xs font-bold text-fb-muted block mb-1">Lịch sử cân đo:</span>
+          <div className="flex items-center justify-between gap-2 mb-1">
+            <span className="text-xs font-bold text-fb-muted">Lịch sử cân đo:</span>
+            <button
+              type="button"
+              onClick={handleExportExcel}
+              disabled={sortedLogs.length === 0}
+              className="inline-flex items-center gap-1 px-2.5 py-1 bg-emerald-50 hover:bg-emerald-100 disabled:opacity-40 disabled:cursor-not-allowed text-emerald-800 border border-emerald-200 rounded-lg font-bold text-[11px] transition cursor-pointer"
+              title="Xuất dữ liệu tăng trọng ra file Excel"
+            >
+              <FileSpreadsheet className="w-3.5 h-3.5 shrink-0" />
+              <span>Xuất Excel</span>
+            </button>
+          </div>
           {sortedLogs.length === 0 ? (
             <p className="text-center py-3 text-xs text-fb-muted">Chưa có mốc cân đo nào.</p>
           ) : (
@@ -810,6 +866,19 @@ export function ModalCropTracking({
     setSize('');
   };
 
+  const handleExportExcel = () => {
+    if (sortedLogs.length === 0) return;
+    exportGrowthLogsToExcel(
+      'bieu-do-sinh-truong',
+      'Sinh Trưởng',
+      'Mã Vụ / Cây Trồng',
+      cropId,
+      'Chiều Cao / Kích Thước (cm)',
+      'Chênh Lệch (cm)',
+      sortedLogs.map((l) => ({ created_at: l.created_at, value: getLogVal(l) }))
+    );
+  };
+
   return (
     <ModalWrapper isOpen={isOpen} onClose={onClose} title={`Biểu Đồ Sinh Trưởng: ${cropId}`} icon="📏">
       <div className="space-y-3.5">
@@ -869,7 +938,19 @@ export function ModalCropTracking({
 
         {/* Lịch sử các lần đo */}
         <div className="max-h-40 overflow-y-auto space-y-1.5 pr-1">
-          <span className="text-xs font-bold text-fb-muted block mb-1">Lịch sử đo đạc sinh trưởng:</span>
+          <div className="flex items-center justify-between gap-2 mb-1">
+            <span className="text-xs font-bold text-fb-muted">Lịch sử đo đạc sinh trưởng:</span>
+            <button
+              type="button"
+              onClick={handleExportExcel}
+              disabled={sortedLogs.length === 0}
+              className="inline-flex items-center gap-1 px-2.5 py-1 bg-emerald-50 hover:bg-emerald-100 disabled:opacity-40 disabled:cursor-not-allowed text-emerald-800 border border-emerald-200 rounded-lg font-bold text-[11px] transition cursor-pointer"
+              title="Xuất dữ liệu sinh trưởng cây trồng ra file Excel"
+            >
+              <FileSpreadsheet className="w-3.5 h-3.5 shrink-0" />
+              <span>Xuất Excel</span>
+            </button>
+          </div>
           {sortedLogs.length === 0 ? (
             <p className="text-center py-3 text-xs text-fb-muted">Chưa có mốc đo chiều cao nào.</p>
           ) : (
@@ -906,6 +987,48 @@ export function ModalCropTracking({
 // ==========================================
 // 7. Modal Sức Khỏe & Thú Y (Chăn Nuôi)
 // ==========================================
+const HEALTH_TYPE_LABELS: Record<string, string> = {
+  Vaccine: 'Tiêm Vắc-xin',
+  Treatment: 'Điều trị / Thuốc',
+  Sick: 'Phát hiện bệnh',
+  Checkup: 'Khám sức khỏe',
+};
+
+const CROP_CARE_TYPE_LABELS: Record<string, string> = {
+  Water: 'Tưới Nước',
+  Fertilizer: 'Bón Phân NPK',
+  Pesticide: 'Phun Thuốc BVTV',
+  Prune: 'Tỉa Cành / Chồi',
+  Inspect: 'Kiểm Tra Sâu Bệnh',
+};
+
+function exportNotebookLogsToExcel(
+  filenamePrefix: string,
+  sheetTitle: string,
+  targetLabel: string,
+  targetId: string,
+  actionHeader: string,
+  typeLabels: Record<string, string>,
+  logs: Array<{ type: string; action?: string; note?: string; created_at?: string }>
+) {
+  const dateSuffix = new Date().toISOString().slice(0, 10);
+  const safeId = (targetId || 'record').replace(/[^a-zA-Z0-9_-]/g, '_');
+  const safeSheet = `${sheetTitle} ${targetId}`.slice(0, 31);
+  exportTableToExcel(
+    `${filenamePrefix}-${safeId}-${dateSuffix}`,
+    safeSheet,
+    ['STT', targetLabel, 'Phân Loại', actionHeader, 'Ghi Chú Chi Tiết', 'Thời Gian'],
+    logs.map((l, idx) => [
+      idx + 1,
+      targetId,
+      typeLabels[l.type] || l.type,
+      l.action || '',
+      l.note || '',
+      l.created_at ? new Date(l.created_at).toLocaleString('vi-VN') : 'Gần đây',
+    ])
+  );
+}
+
 export function ModalHealth({
   isOpen,
   onClose,
@@ -931,6 +1054,19 @@ export function ModalHealth({
     await onAddLog(type, action, note);
     setAction('');
     setNote('');
+  };
+
+  const handleExportExcel = () => {
+    if (logs.length === 0) return;
+    exportNotebookLogsToExcel(
+      'so-y-te-thu-y',
+      'Sổ Y Tế',
+      'Mã Thẻ Vật Nuôi',
+      animalId,
+      'Tên Thuốc / Bệnh',
+      HEALTH_TYPE_LABELS,
+      logs
+    );
   };
 
   return (
@@ -979,7 +1115,19 @@ export function ModalHealth({
 
         {/* Danh sách lịch sử y tế */}
         <div className="max-h-56 overflow-y-auto space-y-2 pr-1">
-          <span className="text-xs font-bold text-fb-muted block mb-1">Nhật ký điều trị & vắc-xin:</span>
+          <div className="flex items-center justify-between gap-2 mb-1">
+            <span className="text-xs font-bold text-fb-muted">Nhật ký điều trị &amp; vắc-xin:</span>
+            <button
+              type="button"
+              onClick={handleExportExcel}
+              disabled={logs.length === 0}
+              className="inline-flex items-center gap-1 px-2.5 py-1 bg-emerald-50 hover:bg-emerald-100 disabled:opacity-40 disabled:cursor-not-allowed text-emerald-800 border border-emerald-200 rounded-lg font-bold text-[11px] transition cursor-pointer"
+              title="Xuất sổ y tế thú y ra file Excel"
+            >
+              <FileSpreadsheet className="w-3.5 h-3.5 shrink-0" />
+              <span>Xuất Excel</span>
+            </button>
+          </div>
           {logs.length === 0 ? (
             <p className="text-center py-4 text-xs text-fb-muted">Chưa có lịch sử bệnh án nào.</p>
           ) : (
@@ -1046,6 +1194,19 @@ export function ModalCropCare({
     setNote('');
   };
 
+  const handleExportExcel = () => {
+    if (logs.length === 0) return;
+    exportNotebookLogsToExcel(
+      'so-nhat-ky-canh-tac',
+      'Sổ Canh Tác',
+      'Mã Vụ / Cây Trồng',
+      cropId,
+      'Tên Phân / Thuốc / Bệnh',
+      CROP_CARE_TYPE_LABELS,
+      logs
+    );
+  };
+
   return (
     <ModalWrapper isOpen={isOpen} onClose={onClose} title={`Sổ Nhật Ký Canh Tác: ${cropId}`} icon="💦">
       <div className="space-y-3.5">
@@ -1093,7 +1254,19 @@ export function ModalCropCare({
 
         {/* Danh sách lịch sử chăm sóc */}
         <div className="max-h-56 overflow-y-auto space-y-2 pr-1">
-          <span className="text-xs font-bold text-fb-muted block mb-1">Nhật ký tưới bón & bảo vệ cây:</span>
+          <div className="flex items-center justify-between gap-2 mb-1">
+            <span className="text-xs font-bold text-fb-muted">Nhật ký tưới bón &amp; bảo vệ cây:</span>
+            <button
+              type="button"
+              onClick={handleExportExcel}
+              disabled={logs.length === 0}
+              className="inline-flex items-center gap-1 px-2.5 py-1 bg-emerald-50 hover:bg-emerald-100 disabled:opacity-40 disabled:cursor-not-allowed text-emerald-800 border border-emerald-200 rounded-lg font-bold text-[11px] transition cursor-pointer"
+              title="Xuất sổ nhật ký canh tác & sâu bệnh ra file Excel"
+            >
+              <FileSpreadsheet className="w-3.5 h-3.5 shrink-0" />
+              <span>Xuất Excel</span>
+            </button>
+          </div>
           {logs.length === 0 ? (
             <p className="text-center py-4 text-xs text-fb-muted">Chưa có lịch sử chăm sóc nào.</p>
           ) : (

@@ -2,13 +2,13 @@ import type { Metadata, Viewport } from 'next';
 import './globals.css';
 
 export const metadata: Metadata = {
-  title: 'Smart Farm AI • iOS',
-  description: 'Ứng dụng PWA quản lý nông trại thông minh & Camera AI thời gian thực cho iOS',
+  title: 'V-ARGON • iOS',
+  description: 'Ứng dụng PWA V-ARGON quản lý nông nghiệp & Camera AI thời gian thực cho iOS',
   manifest: '/manifest.json',
   appleWebApp: {
     capable: true,
     statusBarStyle: 'black-translucent',
-    title: 'Smart Farm',
+    title: 'V-ARGON',
   },
   icons: {
     apple: '/apple-touch-icon.png',

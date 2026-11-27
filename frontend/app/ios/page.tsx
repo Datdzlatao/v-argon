@@ -26,10 +26,12 @@ import {
   Users,
   ImagePlus,
   X,
+  Briefcase,
 } from 'lucide-react';
 import './ios.css';
 import WebSocketStreamPlayer from '../../components/WebSocketStreamPlayer';
 import GeminiMarkdown from '../../components/GeminiMarkdown';
+import FeedExtendedModules from '../../components/FeedExtendedModules';
 import {
   BACKEND_URL,
   connectAgentWebSocket,
@@ -57,7 +59,7 @@ import {
   diagnoseDiseaseWithBase64,
 } from '../../lib/agent-api';
 
-type TabKey = 'home' | 'camera' | 'attendance' | 'chat';
+type TabKey = 'home' | 'camera' | 'attendance' | 'manage' | 'chat';
 
 interface PenItem {
   id: string;
@@ -530,13 +532,14 @@ export default function IosPwaPage() {
         <div className="px-4 py-2.5 flex items-center justify-between">
           <div>
             <p className="text-[11px] font-semibold uppercase tracking-wider text-emerald-600">
-              Smart Farm iOS
+              V-ARGON iOS
             </p>
             <h1 className="text-[20px] font-bold tracking-tight leading-tight">
               {activeTab === 'home' && 'Tổng quan trang trại'}
               {activeTab === 'camera' && 'Camera AI Giám sát'}
               {activeTab === 'attendance' && 'Quét mặt & Bảo hộ'}
-              {activeTab === 'chat' && 'Trợ lý Nông trại AI'}
+              {activeTab === 'manage' && 'Quản lý chung'}
+              {activeTab === 'chat' && 'Trợ lý V-ARGON AI'}
             </h1>
           </div>
           <div className="flex items-center gap-2">
@@ -997,6 +1000,13 @@ export default function IosPwaPage() {
           </div>
         )}
 
+        {activeTab === 'manage' && (
+          <FeedExtendedModules
+            penName={currentPen?.name || 'Toàn Trang Trại'}
+            userId={null}
+          />
+        )}
+
         {activeTab === 'chat' && (
           <div className="flex flex-col space-y-3">
             <div className="space-y-2.5">
@@ -1104,11 +1114,12 @@ export default function IosPwaPage() {
       </main>
 
       <nav className="fixed bottom-0 inset-x-0 z-30 ios-glass ios-safe-bottom border-t border-black/10">
-        <div className="max-w-2xl mx-auto grid grid-cols-4 h-[54px]">
+        <div className="max-w-2xl mx-auto grid grid-cols-5 h-[56px]">
           {[
             { key: 'home', label: 'Tổng quan', icon: Home },
-            { key: 'camera', label: 'Camera AI', icon: Video },
+            { key: 'camera', label: 'Camera', icon: Video },
             { key: 'attendance', label: 'Điểm danh', icon: ScanFace },
+            { key: 'manage', label: 'Quản lý', icon: Briefcase },
             { key: 'chat', label: 'Trợ lý AI', icon: MessageCircle },
           ].map((tab) => {
             const Icon = tab.icon;
@@ -1117,12 +1128,12 @@ export default function IosPwaPage() {
               <button
                 key={tab.key}
                 onClick={() => setActiveTab(tab.key as TabKey)}
-                className={`flex flex-col items-center justify-center gap-0.5 transition ${
+                className={`flex flex-col items-center justify-center gap-0.5 transition whitespace-nowrap ${
                   active ? 'text-emerald-600' : 'text-slate-500'
                 }`}
               >
-                <Icon className="w-5 h-5" />
-                <span className="text-[10px] font-semibold">{tab.label}</span>
+                <Icon className="w-5 h-5 shrink-0" />
+                <span className="text-[10px] font-semibold whitespace-nowrap">{tab.label}</span>
               </button>
             );
           })}

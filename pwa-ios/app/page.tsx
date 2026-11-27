@@ -23,9 +23,11 @@ import {
   AlertTriangle,
   ImagePlus,
   X,
+  Briefcase,
 } from 'lucide-react';
 import WebSocketStreamPlayer from '../components/WebSocketStreamPlayer';
 import GeminiMarkdown from '../components/GeminiMarkdown';
+import IosManageModules from '../components/IosManageModules';
 import {
   WS_URL,
   PenItem,
@@ -49,7 +51,7 @@ import {
   diagnoseDiseaseWithBase64,
 } from '../lib/api';
 
-type TabKey = 'home' | 'camera' | 'attendance' | 'chat';
+type TabKey = 'home' | 'camera' | 'attendance' | 'manage' | 'chat';
 
 function formatActionLabel(telemetry: any): { title: string; reason?: string } {
   if (!telemetry) return { title: '👀 Đang giám sát khu vực' };
@@ -425,13 +427,14 @@ export default function IosPwaPage() {
         <div className="px-4 py-2.5 flex items-center justify-between">
           <div>
             <p className="text-[11px] font-semibold uppercase tracking-wider text-emerald-600">
-              Smart Farm iOS
+              V-ARGON iOS
             </p>
             <h1 className="text-[20px] font-bold tracking-tight leading-tight">
               {activeTab === 'home' && 'Tổng quan trang trại'}
               {activeTab === 'camera' && 'Camera AI Giám sát'}
               {activeTab === 'attendance' && 'Quét mặt & Bảo hộ'}
-              {activeTab === 'chat' && 'Trợ lý Nông trại AI'}
+              {activeTab === 'manage' && 'Quản lý chung'}
+              {activeTab === 'chat' && 'Trợ lý V-ARGON AI'}
             </h1>
           </div>
           <div className="flex items-center gap-2">
@@ -455,7 +458,7 @@ export default function IosPwaPage() {
 
         {/* Pen Selector Pills */}
         {pens.length > 0 && (
-          <div className="px-4 pb-2.5 flex gap-2 overflow-x-auto no-scrollbar">
+          <div className="px-4 pb-2.5 flex gap-2 overflow-x-auto no-scrollbar items-center">
             {pens.map((pen) => {
               const selected = pen.id === currentPenId;
               return (
@@ -472,6 +475,25 @@ export default function IosPwaPage() {
                 </button>
               );
             })}
+            <button
+              onClick={async () => {
+                const name = prompt('Nhập tên chuồng / khu vườn mới:');
+                if (!name?.trim()) return;
+                const type = confirm('Đây là khu Trồng trọt? (OK = Trồng trọt, Cancel = Chăn nuôi)') ? 'cultivation' : 'livestock';
+                const id = `${type === 'cultivation' ? 'PEN-B' : 'PEN-A'}-${Date.now().toString().slice(-3)}`;
+                const backendUrl = process.env.NEXT_PUBLIC_BACKEND_URL || 'http://127.0.0.1:8000';
+                await fetch(`${backendUrl}/api/pens`, {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({ id, name: name.trim(), type }),
+                });
+                await loadDashboard(id);
+                setCurrentPenId(id);
+              }}
+              className="shrink-0 px-3 py-1.5 rounded-full text-[12px] font-bold bg-emerald-50 text-emerald-700 border border-emerald-200"
+            >
+              + Thêm khu
+            </button>
           </div>
         )}
       </header>
@@ -804,6 +826,16 @@ export default function IosPwaPage() {
           </div>
         )}
 
+        {activeTab === 'manage' && (
+          <IosManageModules
+            penId={currentPenId}
+            penName={currentPen?.name || 'Toàn Trang Trại'}
+            penType={(currentPen as any)?.type || 'livestock'}
+            pens={pens}
+            onRefreshParent={() => loadDashboard(currentPenId || undefined)}
+          />
+        )}
+
         {/* TAB 4: AI CHAT */}
         {activeTab === 'chat' && (
           <div className="flex flex-col space-y-3">
@@ -913,11 +945,12 @@ export default function IosPwaPage() {
 
       {/* iOS Bottom Tab Bar */}
       <nav className="fixed bottom-0 inset-x-0 z-30 ios-glass ios-safe-bottom border-t border-black/10">
-        <div className="max-w-2xl mx-auto grid grid-cols-4 h-[54px]">
+        <div className="max-w-2xl mx-auto grid grid-cols-5 h-[56px]">
           {[
             { key: 'home', label: 'Tổng quan', icon: Home },
-            { key: 'camera', label: 'Camera AI', icon: Video },
+            { key: 'camera', label: 'Camera', icon: Video },
             { key: 'attendance', label: 'Điểm danh', icon: ScanFace },
+            { key: 'manage', label: 'Quản lý', icon: Briefcase },
             { key: 'chat', label: 'Trợ lý AI', icon: MessageCircle },
           ].map((tab) => {
             const Icon = tab.icon;
@@ -926,12 +959,12 @@ export default function IosPwaPage() {
               <button
                 key={tab.key}
                 onClick={() => setActiveTab(tab.key as TabKey)}
-                className={`flex flex-col items-center justify-center gap-0.5 transition ${
+                className={`flex flex-col items-center justify-center gap-0.5 transition whitespace-nowrap ${
                   active ? 'text-emerald-600' : 'text-slate-500'
                 }`}
               >
-                <Icon className="w-5 h-5" />
-                <span className="text-[10px] font-semibold">{tab.label}</span>
+                <Icon className="w-5 h-5 shrink-0" />
+                <span className="text-[10px] font-semibold whitespace-nowrap">{tab.label}</span>
               </button>
             );
           })}

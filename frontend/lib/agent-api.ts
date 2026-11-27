@@ -1179,3 +1179,139 @@ export async function updatePenMetadataAPI(
   return await res.json();
 }
 
+// ============================================================
+// V-ARGON OFFICE — END-OF-DAY SUMMARY AGENT API
+// ============================================================
+
+export interface OfficeRecordItem {
+  id: string | number;
+  user_id?: string | null;
+  report_date?: string;
+  hour_slot?: string;
+  category?: string;
+  code: string;
+  item: string;
+  quantity_or_amount?: number;
+  unit?: string;
+  status: string;
+  note: string;
+  source_table?: string;
+  timestampt?: string;
+}
+
+export async function fetchOfficeRecordsAPI(params?: {
+  report_date?: string;
+  category?: string;
+  user_id?: string | null;
+  limit?: number;
+}): Promise<{ status: string; storage_mode?: string; count: number; records: OfficeRecordItem[] }> {
+  const qs = new URLSearchParams();
+  if (params?.report_date) qs.set('report_date', params.report_date);
+  if (params?.category && params.category !== 'all') qs.set('category', params.category);
+  if (params?.user_id) qs.set('user_id', params.user_id);
+  if (params?.limit) qs.set('limit', String(params.limit));
+  const queryStr = qs.toString();
+  const res = await fetch(`${BACKEND_URL}/api/office/records${queryStr ? `?${queryStr}` : ''}`, {
+    cache: 'no-store',
+  });
+  if (!res.ok) {
+    throw new Error(`Lỗi tải dữ liệu Office (${res.status})`);
+  }
+  return await res.json();
+}
+
+export async function triggerOfficeSummaryAPI(params?: {
+  target_date?: string;
+  user_id?: string | null;
+}): Promise<any> {
+  const res = await fetch(`${BACKEND_URL}/api/office/summarize`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      target_date: params?.target_date || undefined,
+      user_id: params?.user_id || undefined,
+    }),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.detail || 'Lỗi khi chạy Agent tổng hợp cuối ngày');
+  }
+  return await res.json();
+}
+
+export async function createOfficeRecordAPI(payload: Partial<OfficeRecordItem>): Promise<OfficeRecordItem> {
+  const res = await fetch(`${BACKEND_URL}/api/office/records`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.detail || 'Lỗi khi thêm bản ghi Office');
+  }
+  const data = await res.json();
+  return data.record;
+}
+
+export async function updateOfficeRecordAPI(
+  id: string | number,
+  updates: Partial<OfficeRecordItem>
+): Promise<OfficeRecordItem> {
+  const res = await fetch(`${BACKEND_URL}/api/office/records/${encodeURIComponent(String(id))}`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(updates),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.detail || 'Lỗi khi cập nhật bản ghi Office');
+  }
+  const data = await res.json();
+  return data.record;
+}
+
+export async function deleteOfficeRecordAPI(id: string | number): Promise<void> {
+  const res = await fetch(`${BACKEND_URL}/api/office/records/${encodeURIComponent(String(id))}`, {
+    method: 'DELETE',
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.detail || 'Lỗi khi xóa bản ghi Office');
+  }
+}
+
+export interface StaffWageItem {
+  id: string;
+  name: string;
+  role?: string;
+  pen_id?: string;
+  phone?: string;
+  daily_wage?: number;
+}
+
+export async function fetchStaffListWithWageAPI(): Promise<StaffWageItem[]> {
+  const res = await fetch(`${BACKEND_URL}/api/staff`, { cache: 'no-store' });
+  if (!res.ok) throw new Error('Không thể tải danh sách nhân sự');
+  return await res.json();
+}
+
+export async function fetchTodayAttendanceAPI(): Promise<any[]> {
+  const res = await fetch(`${BACKEND_URL}/api/staff/attendance`, { cache: 'no-store' });
+  if (!res.ok) return [];
+  return await res.json();
+}
+
+export async function updateStaffWageAPI(staffId: string, dailyWage: number): Promise<StaffWageItem> {
+  const res = await fetch(`${BACKEND_URL}/api/staff/${encodeURIComponent(staffId)}/wage`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ daily_wage: dailyWage }),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.detail || 'Lỗi khi cập nhật tiền công nhân sự');
+  }
+  const data = await res.json();
+  return data.staff;
+}
+

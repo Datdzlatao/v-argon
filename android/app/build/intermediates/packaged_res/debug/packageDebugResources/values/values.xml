@@ -9,7 +9,7 @@
     <color name="farm_surface">#FFFFFF</color>
     <color name="farm_text_main">#14532D</color>
     <color name="farm_text_muted">#475569</color>
-    <string name="app_name">Nông Trại Thông Minh</string>
+    <string name="app_name">V-ARGON</string>
     <string name="cultivation_tab">Trồng Trọt</string>
     <string name="demo_mode">Chế độ Dùng Thử</string>
     <string name="livestock_tab">Chăn Nuôi</string>
